@@ -98,7 +98,8 @@ class SystemWatcher:
 
         if IS_LINUX:
             path = "/sys/class/power_supply"
-            mains = batteries: list[tuple[str, int, bool]] = []
+            mains: list[tuple[str, int, bool]] = []
+            batteries: list[tuple[str, int, bool]] = []
             try:
                 for entry in sorted(os.listdir(path)):
                     if not entry.startswith(("BAT", "ADP")):
