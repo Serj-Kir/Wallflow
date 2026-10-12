@@ -19,6 +19,7 @@ from PySide6.QtGui import QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 from .live.renderer import WallpaperWidget
+from .version import APP_NAME
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,9 @@ _NET_WM_STATE_SKIP_TASKBAR = "_NET_WM_STATE_SKIP_TASKBAR"
 _NET_WM_STATE_STICKY = "_NET_WM_STATE_STICKY"
 _NET_WM_WINDOW = "_NET_WM_WINDOW"
 _NET_SUPPORTING_WM_CHECK = "_NET_SUPPORTING_WM_CHECK"
+
+#: Predefined X11 atom id for XA_ATOM, the type of all the properties above.
+XA_ATOM = 4
 
 
 #: Signature of ``XErrorHandler``.
@@ -74,37 +78,64 @@ def send_to_desktop_layer(widget: QWidget) -> bool:
     if x11 is None or not os.environ.get("DISPLAY"):
         return False
     try:
+        # restype alone is not enough: without argtypes ctypes treats every
+        # argument as an int and rejects None.
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
         x11.XOpenDisplay.restype = ctypes.c_void_p
         x11.XInternAtom.restype = ctypes.c_ulong
         x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
         x11.XChangeProperty.argtypes = [
-            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_int,
-            ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+            ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
         ]
+        x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        x11.XFlush.argtypes = [ctypes.c_void_p]
+        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
 
         display = x11.XOpenDisplay(None)
         if not display:
             return False
         try:
             wid = int(widget.winId())
-            type_atom = x11.XInternAtom(display, _NET_WM_WINDOW_TYPE.encode(), False)
-            desktop_atom = x11.XInternAtom(
-                display, _NET_WM_WINDOW_TYPE_DESKTOP.encode(), False
+
+            def set_atoms(prop_name: str, atoms: list[int]) -> None:
+                """Replace ``prop_name`` with the given 32-bit atom values.
+
+                The Xlib argument order is (display, window, property, type,
+                format, mode, data, nelements) - ``type`` comes *before*
+                ``format``, which is easy to get wrong.
+                """
+                if not atoms:
+                    return
+                prop = x11.XInternAtom(display, prop_name.encode(), False)
+                buf = (ctypes.c_ulong * len(atoms))(*atoms)
+                x11.XChangeProperty(
+                    display,
+                    wid,
+                    prop,
+                    XA_ATOM,          # type
+                    32,               # format
+                    0,                # mode = PropModeReplace
+                    ctypes.cast(buf, ctypes.c_char_p),
+                    len(atoms),
+                )
+
+            set_atoms(
+                _NET_WM_WINDOW_TYPE,
+                [x11.XInternAtom(display, _NET_WM_WINDOW_TYPE_DESKTOP.encode(), False)],
             )
-            # 32 = XA_ATOM
-            x11.XChangeProperty(display, wid, type_atom, 32, 0, 1,
-                                ctypes.cast(ctypes.c_ulong(desktop_atom), ctypes.c_char_p), 4)
-            state_atom = x11.XInternAtom(display, b"_NET_WM_STATE", False)
-            for name in (_NET_WM_STATE_SKIP_PAGER, _NET_WM_STATE_SKIP_TASKBAR, _NET_WM_STATE_STICKY):
-                atom = x11.XInternAtom(display, name.encode(), False)
-                x11.XChangeProperty(display, wid, state_atom, 32, 0, 1,
-                                    ctypes.cast(ctypes.c_ulong(atom), ctypes.c_char_p), 4)
+            set_atoms(
+                "_NET_WM_STATE",
+                [
+                    x11.XInternAtom(display, name.encode(), False)
+                    for name in (_NET_WM_STATE_SKIP_PAGER, _NET_WM_STATE_SKIP_TASKBAR, _NET_WM_STATE_STICKY)
+                ],
+            )
             x11.XFlush(display)
-            x11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
             x11.XSync(display, 0)
+            log.info("Wallpaper window 0x%x pinned to the X11 desktop layer", wid)
             return True
         finally:
-            x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
             x11.XCloseDisplay(display)
     except Exception:  # noqa: BLE001 - never let a hint break playback
         log.debug("Could not set X11 desktop layer hint", exc_info=True)
@@ -145,7 +176,9 @@ class WallpaperWindow(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setFocusPolicy(Qt.NoFocus)
-        self.setWindowTitle("Wallflow")
+        # Distinct title: these windows are visible to tools like wmctrl and
+        # must not be mistaken for the main application window.
+        self.setWindowTitle(f"{APP_NAME} — wallpaper layer")
 
         if isinstance(monitor, QWidget):  # a QScreen is passed in practice
             self.apply_geometry_for(monitor)  # type: ignore[arg-type]
@@ -173,7 +206,7 @@ class WallpaperWindow(QWidget):
         if widget is not None:
             widget.setParent(self)
             widget.setGeometry(self.rect())
-            widget.setFit("fill")
+            widget.set_fit("fill")
             widget.show()
         self.update()
 
@@ -205,13 +238,16 @@ class WallpaperWindow(QWidget):
         """Show the window and pin it to the desktop layer."""
         self._content_layout()
         if not self.isVisible():
+            # showEvent applies the desktop-layer hint once the window is
+            # mapped; Qt rewrites _NET_WM_WINDOW_TYPE on every map.
             self.show()
-        if not self._desktop_layer:
-            self._desktop_layer = send_to_desktop_layer(self)
-            if self._desktop_layer and self.isVisible():
-                # Changing the layer can require a re-show under some WMs.
-                self.hide()
-                self.show()
+        else:
+            self._apply_desktop_layer()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        super().hideEvent(event)
+        # The property is lost on the next map, so force it to be re-applied.
+        self._desktop_layer = False
 
     def _content_layout(self) -> None:
         if self._content is not None:
@@ -223,12 +259,18 @@ class WallpaperWindow(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        if not self._desktop_layer:
-            QTimer.singleShot(0, self._reapply_layer)
+        QTimer.singleShot(0, self._apply_desktop_layer)
 
-    def _reapply_layer(self) -> None:
-        if self.isVisible() and not self._desktop_layer:
-            self._desktop_layer = send_to_desktop_layer(self)
+    def _apply_desktop_layer(self) -> None:
+        """Ask X11 to treat this window as the desktop background.
+
+        Qt derives ``_NET_WM_WINDOW_TYPE`` from the window flags every time the
+        window is mapped, so this must run *after* the map and be re-run on every
+        subsequent show.
+        """
+        if not self.isVisible() or self._desktop_layer:
+            return
+        self._desktop_layer = send_to_desktop_layer(self)
 
     # ---------------------------------------------------------------- pause
     def start_content(self) -> None:
@@ -280,7 +322,7 @@ class WallpaperPreview(QWidget):
         if widget is not None:
             widget.setParent(self)
             widget.setGeometry(self.rect())
-            widget.setFit("fit")
+            widget.set_fit("fit")
             widget.show()
 
     def showEvent(self, event) -> None:  # noqa: N802

@@ -10,7 +10,16 @@ import sys
 from pathlib import Path
 
 from . import paths, utils
+from .models import Wallpaper, WallpaperKind
 from .version import APP_NAME, APP_VERSION
+
+#: Human-readable names used by the ``--set`` command.
+KIND_LABEL = {
+    WallpaperKind.IMAGE: "фото",
+    WallpaperKind.VIDEO: "видео",
+    WallpaperKind.WEB: "HTML",
+    WallpaperKind.SCENE: "сцена",
+}
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -22,6 +31,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--minimized", action="store_true", help="запустить свёрнутым в трей")
     parser.add_argument("--hidden", action="store_true", help="запустить скрытно")
     parser.add_argument("--data-dir", help="использовать свою папку с данными")
+    parser.add_argument(
+        "--set",
+        metavar="ФАЙЛ",
+        help="применить обои из файла и выйти (папка — HTML-обои, .scene — сцена)",
+    )
+    parser.add_argument("--profile", metavar="ИМЯ", help="применить профиль по имени при запуске")
+    parser.add_argument("--list-monitors", action="store_true", help="показать мониторы и выйти")
     parser.add_argument("--reset-settings", action="store_true", help="сбросить настройки")
     parser.add_argument("--verbose", "-v", action="store_true", help="подробный журнал")
     parser.add_argument("--quit", action="store_true", help="закрыть уже запущенный Wallflow")
@@ -49,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox")
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu-driver-bug-workarounds")
 
-    from PySide6.QtCore import QCoreApplication, Qt
+    from PySide6.QtCore import QCoreApplication, QTimer, Qt
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtWidgets import QApplication
 
@@ -69,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     from .config import Config
     from .controller import PlaybackController
     from .engine import create_stack
+    from .models import Wallpaper
     from .player import WallpaperPlayer
     from .ui import theme
     from .ui.main_window import MainWindow
@@ -85,6 +102,14 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Backend: %s", backend.primary.name)
 
     player = WallpaperPlayer(backend, config, parent=app)
+    player.refresh_monitors()
+
+    if args.list_monitors:
+        _print_monitors(player, backend)
+        return 0
+
+    if args.set:
+        return _apply_one(args.set, config, backend, player, app)
 
     # The library is shared by the player, the controller and the UI, so it is
     # built once here and handed to each of them.
@@ -114,6 +139,51 @@ def _accent(config) -> str:
 
     value = config.get("accent_color", "auto")
     return value if isinstance(value, str) and value.startswith("#") else theme.ACCENT
+
+
+def _print_monitors(player, backend) -> None:
+    print(f"Система: {backend.primary.label}  ({backend.primary.name})")
+    capabilities = backend.capabilities
+    print(f"  свои обои на каждый монитор: {'да' if capabilities.per_monitor else 'нет'}")
+    print(f"  сессия: {'Wayland' if player._is_wayland() else 'X11'}")
+    print("Мониторы:")
+    for index, monitor in enumerate(player.monitors(), start=1):
+        flags = ["основной"] if monitor.primary else []
+        if monitor.scale != 1.0:
+            flags.append(f"{monitor.scale:g}x")
+        print(
+            f"  {index}. {monitor.id}  {monitor.width}x{monitor.height}"
+            f"  @({monitor.x},{monitor.y})  {' '.join(flags)}".rstrip()
+        )
+    if not player.monitors():
+        print("  (не обнаружены)")
+
+
+def _apply_one(path_str: str, config, backend, player, app) -> int:
+    """Apply a single wallpaper without starting the full UI."""
+    path = Path(path_str).expanduser().resolve()
+    if not path.exists():
+        print(f"Файл не найден: {path}", file=sys.stderr)
+        return 2
+
+    if path.is_dir():
+        wallpaper = Wallpaper.from_path(path)
+        wallpaper.kind = WallpaperKind.WEB.value
+    else:
+        wallpaper = Wallpaper.from_path(path)
+        wallpaper.kind = WallpaperKind.from_path(path).value
+
+    player.set_current(wallpaper)
+    print(f"Применено: {wallpaper.name}  [{KIND_LABEL.get(wallpaper.wallpaper_kind, '')}]")
+    visible = any(slot.window.isVisible() for slot in player._slots)
+    print(f"Режим: {'своё окно' if visible else 'системный'}")
+
+    # An animated wallpaper only stays on screen while the process lives.
+    if wallpaper.is_animated:
+        print("Анимация идёт, пока работает эта команда (Ctrl+C — остановить).")
+        return app.exec()
+    QTimer.singleShot(1500, app.quit)
+    return app.exec()
 
 
 def _install_signal_handling(app, window) -> None:

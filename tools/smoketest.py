@@ -142,6 +142,30 @@ def main() -> int:
     check("wrap-around rule matches", night.matches(23 * 60, 3))
     check("wrap-around rule excludes noon", not night.matches(12 * 60, 3))
 
+    section("Per-monitor mode selection")
+    from wallflow.models import WallpaperKind as _Kind
+
+    player_auto = WallpaperPlayer(create_stack(), config)
+    check("static, no override -> native on GNOME",
+          player_auto._decide_mode(_Kind.IMAGE, needs_per_monitor=False) == "native",
+          player_auto._decide_mode(_Kind.IMAGE, needs_per_monitor=False))
+    check("static, per-monitor override -> window",
+          player_auto._decide_mode(_Kind.IMAGE, needs_per_monitor=True) == "window",
+          player_auto._decide_mode(_Kind.IMAGE, needs_per_monitor=True))
+    for kind in (_Kind.VIDEO, _Kind.WEB, _Kind.SCENE):
+        check(f"{kind.value} always uses a window",
+              player_auto._decide_mode(kind, needs_per_monitor=False) == "window")
+
+    config.set("static_wallpaper_mode", "window")
+    check("forced window mode honoured",
+          WallpaperPlayer(create_stack(), config)._decide_mode(
+              _Kind.IMAGE, needs_per_monitor=False) == "window")
+    config.set("static_wallpaper_mode", "native")
+    check("forced native mode honoured",
+          WallpaperPlayer(create_stack(), config)._decide_mode(
+              _Kind.IMAGE, needs_per_monitor=True) == "native")
+    config.set("static_wallpaper_mode", "auto")
+
     section("Pause policies")
     controller.set_manual_pause(True)
     check("manual pause", controller.paused)

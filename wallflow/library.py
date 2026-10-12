@@ -141,7 +141,13 @@ class Library:
         return sorted(seen, key=lambda t: (-seen[t], t.lower()))
 
     # --------------------------------------------------------------- mutate
-    def add(self, wallpaper: Wallpaper) -> Wallpaper:
+    def add(self, wallpaper: Wallpaper, *, save: bool = True) -> Wallpaper:
+        """Register a wallpaper in the index.
+
+        Persists immediately so a crash right after an import cannot lose the
+        work. Bulk callers pass ``save=False`` and call :meth:`save` once at the
+        end instead of rewriting the index per file.
+        """
         existing = self._items.get(wallpaper.id)
         if existing is not None:
             # Preserve user-editable fields when re-adding the same file.
@@ -152,6 +158,8 @@ class Library:
         if not wallpaper.added_at:
             wallpaper.added_at = time.time()
         self._items[wallpaper.id] = wallpaper
+        if save:
+            self.save()
         return wallpaper
 
     def remove(self, item_id: str, *, delete_file: bool = False) -> bool:
@@ -260,6 +268,7 @@ class Library:
         subfolder: str = "",
         author: str = "",
         source_url: str = "",
+        save: bool = True,
     ) -> Optional[Wallpaper]:
         """Copy (or move) a file into the library and index it."""
         src = Path(path).expanduser()
@@ -288,7 +297,7 @@ class Library:
         wallpaper.source_url = source_url
         if subfolder:
             wallpaper.tags = [utils.safe_filename(subfolder, "imported")]
-        return self.add(wallpaper)
+        return self.add(wallpaper, save=save)
 
     def import_dir(self, path: Path | str, *, move: bool = False) -> int:
         """Import every supported file inside a folder, keeping its structure."""
@@ -302,19 +311,29 @@ class Library:
             # Only keep the first two levels to avoid pathological trees.
             parts = [p for p in Path(sub).parts if p != "."][:2] if sub else []
             subfolder = "/".join(utils.safe_filename(p, "folder") for p in parts)
-            if self.import_file(file_path, move=move, subfolder=subfolder):
+            if self.import_file(file_path, move=move, subfolder=subfolder, save=False):
                 count += 1
+        # One write for the whole batch instead of one per file.
+        self.save()
         return count
 
 
 def _walk(directory: Path) -> Iterator[Path]:
-    """Yield supported wallpaper files under ``directory``."""
+    """Yield supported wallpaper files under ``directory``.
+
+    Skip rules are applied to the path *relative to the scan root*: comparing
+    absolute parts would reject everything inside e.g. ``~/.local/share``.
+    """
     suffixes = IMAGE_SUFFIXES | VIDEO_SUFFIXES | SCENE_SUFFIXES | {".html", ".zip"}
     try:
         for entry in sorted(directory.rglob("*")):
-            if any(part in SKIP_DIRS or part.startswith(".") for part in entry.parts[:-1]):
-                continue
             if not entry.is_file() or entry.name.startswith("."):
+                continue
+            try:
+                relative = entry.relative_to(directory)
+            except ValueError:
+                continue
+            if any(part in SKIP_DIRS or part.startswith(".") for part in relative.parts[:-1]):
                 continue
             if entry.suffix.lower() in suffixes:
                 yield entry

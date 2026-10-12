@@ -254,6 +254,7 @@ class HotkeyManager(QAbstractNativeEventFilter):
         except Exception:  # noqa: BLE001
             log.debug("Could not install an X11 error handler", exc_info=True)
 
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
         x11.XOpenDisplay.restype = ctypes.c_void_p
         x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
         x11.XDefaultRootWindow.restype = ctypes.c_ulong

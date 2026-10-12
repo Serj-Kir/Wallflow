@@ -22,7 +22,6 @@ from .engine.base import FitMode, WallpaperRequest
 from .live import capabilities as live_capabilities
 from .live import create_widget, unavailable_reason
 from .models import MonitorInfo, Wallpaper, WallpaperKind
-from .utils import IS_LINUX
 from .window import WallpaperPreview, WallpaperWindow
 
 log = logging.getLogger(__name__)
@@ -128,27 +127,28 @@ class WallpaperPlayer(QObject):
     def static_mode(self) -> str:
         return self._config.get("static_wallpaper_mode", STATIC_MODE_AUTO)
 
-    def _decide_mode(self, kind: WallpaperKind, *, per_monitor_override: bool) -> str:
+    def _decide_mode(self, kind: WallpaperKind, *, needs_per_monitor: bool) -> str:
         """Pick native vs. window for a static image.
 
         ``native`` hands the file to the desktop, which is the crispest option
         and the only one that can sit correctly behind icons on Wayland. The
         window renderer is used when the user asked for it, or when the
-        desktop's API cannot express what the profile wants.
+        desktop's API cannot express what the profile wants - which is the case
+        on GNOME/Cinnamon, whose background API holds exactly one image.
         """
+        if kind is not WallpaperKind.IMAGE:
+            # Animated wallpapers are always composited by us.
+            return "window"
+
         mode = self.static_mode
         if mode == STATIC_MODE_WINDOW:
             return "window"
         if mode == STATIC_MODE_NATIVE:
             return "native"
+
         # auto
-        capabilities = self._backend.capabilities
-        if per_monitor_override and not capabilities.per_monitor:
-            # The desktop only supports one image for every screen, so a
-            # per-monitor profile has to be composited by us.
+        if needs_per_monitor and not self._backend.capabilities.per_monitor:
             return "window"
-        if IS_LINUX and self._is_wayland() and not capabilities.per_monitor:
-            return "native"
         return "native"
 
     @staticmethod
@@ -180,73 +180,93 @@ class WallpaperPlayer(QObject):
             self.wallpaper_changed.emit(None)
             return
 
-        if monitor_map:
-            for slot in self._slots:
-                override = monitor_map.get(slot.id)
-                if override is not None:
-                    self._apply_slot(slot, override, transition_ms)
-            remaining = [s for s in self._slots if s.id not in monitor_map]
-        else:
-            remaining = list(self._slots)
+        overrides = {
+            monitor_id: item
+            for monitor_id, item in (monitor_map or {}).items()
+            if item is not None
+        }
+        # The wallpaper each screen should end up showing.
+        effective = {
+            slot.id: overrides.get(slot.id) or wallpaper for slot in self._slots
+        }
+        needs_per_monitor = (
+            len(self._slots) > 1
+            and len({id(item) for item in effective.values()}) > 1
+        )
 
-        if remaining:
-            self._apply_to_all(wallpaper, slots=remaining, transition_ms=transition_ms)
-        self.wallpaper_changed.emit(wallpaper)
-
-    def _apply_to_all(
-        self,
-        wallpaper: Wallpaper,
-        *,
-        slots: Optional[list[MonitorSlot]] = None,
-        transition_ms: Optional[int] = None,
-    ) -> None:
-        targets = slots if slots is not None else self._slots
-        mode = self._decide_mode(wallpaper.wallpaper_kind, per_monitor_override=False)
-        if mode == "native":
-            self._hide_all_windows()
-            self._apply_native(wallpaper, slot_ids=[s.id for s in targets])
-        else:
-            for slot in targets:
-                self._apply_slot(slot, wallpaper, transition_ms)
-
-    def _apply_slot(
-        self,
-        slot: MonitorSlot,
-        wallpaper: Wallpaper,
-        transition_ms: Optional[int] = None,
-    ) -> None:
         mode = self._decide_mode(
-            wallpaper.wallpaper_kind, per_monitor_override=slot.id != (self._current.id if self._current else slot.id)
+            wallpaper.wallpaper_kind, needs_per_monitor=needs_per_monitor
         )
         if mode == "native":
-            slot.window.hide()
-            self._apply_native(wallpaper, slot_ids=[slot.id])
+            self._apply_native_all(effective, needs_per_monitor=needs_per_monitor)
+        else:
+            self._apply_windows(effective, transition_ms, fallback=wallpaper)
+
+        self.wallpaper_changed.emit(wallpaper)
+
+    def _apply_native_all(
+        self, effective: dict[str, Wallpaper], *, needs_per_monitor: bool
+    ) -> None:
+        """Apply static images through the desktop's own API on every screen."""
+        self._hide_all_windows()
+        capabilities = self._backend.capabilities
+
+        if not capabilities.per_monitor and needs_per_monitor:
+            # Should not be reached: _decide_mode would have picked "window".
+            log.warning(
+                "Backend %s cannot place wallpapers per monitor; falling back to windows",
+                self._backend.primary.name,
+            )
+            self._apply_windows(effective, fallback=self._current)
             return
-        self._apply_native(wallpaper, slot_ids=[], fallback_only=False)
-        self._render_in_window(slot, wallpaper, transition_ms)
+
+        if capabilities.per_monitor:
+            for monitor_id, item in effective.items():
+                self._apply_native(item, monitor_id)
+            return
+
+        # One image for every screen.
+        applied_ids: set[int] = set()
+        for item in effective.values():
+            if id(item) in applied_ids:
+                continue
+            applied_ids.add(id(item))
+            self._apply_native(item, None)
+
+    def _apply_windows(
+        self,
+        effective: dict[str, Wallpaper],
+        transition_ms: Optional[int] = None,
+        *,
+        fallback: Optional[Wallpaper] = None,
+    ) -> None:
+        """Render each monitor's wallpaper into its own desktop-level window."""
+        # Give the desktop a sensible native wallpaper underneath. If our window
+        # is ever covered - a compositor that refuses the desktop layer, a
+        # crashed renderer - the user still sees a real wallpaper rather than a
+        # black rectangle.
+        if fallback is not None and fallback.wallpaper_kind is WallpaperKind.IMAGE:
+            self._apply_native(fallback, None, quiet=True)
+
+        for slot in self._slots:
+            item = effective.get(slot.id)
+            if item is None:
+                continue
+            self._render_in_window(slot, item, transition_ms)
 
     def _apply_native(
-        self,
-        wallpaper: Wallpaper,
-        *,
-        slot_ids: list[str],
-        fallback_only: bool = True,
+        self, wallpaper: Wallpaper, monitor_id: Optional[str], *, quiet: bool = False
     ) -> None:
-        """Hand a static image to the desktop's own wallpaper API."""
-        kind = wallpaper.wallpaper_kind
-        if kind is not WallpaperKind.IMAGE:
+        """Hand one static image to the desktop's own wallpaper API."""
+        if wallpaper.wallpaper_kind is not WallpaperKind.IMAGE:
             return
         path = Path(wallpaper.path)
         if not path.exists():
-            self.error.emit(f"Файл не найден: {path.name}")
+            if not quiet:
+                self.error.emit(f"Файл не найден: {path.name}")
             return
-        ids = slot_ids or [s.id for s in self._slots]
-        applied = False
-        for monitor_id in ids:
-            request = WallpaperRequest(path=path, monitor_id=monitor_id, fit=FitMode.FILL)
-            if self._backend.set_wallpaper(request):
-                applied = True
-        if not applied and not fallback_only:
+        request = WallpaperRequest(path=path, monitor_id=monitor_id or "", fit=FitMode.FILL)
+        if not self._backend.set_wallpaper(request) and not quiet:
             self.error.emit("Не удалось применить обои средствами системы")
 
     # -------------------------------------------------------------- rendering

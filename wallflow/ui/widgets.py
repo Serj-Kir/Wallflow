@@ -232,13 +232,14 @@ class WallpaperDelegate(QStyledItemDelegate):
         side = self._cache.size
         return QSize(side, side + 54)
 
-    def paint(self, option: QStyleOptionViewItem, index) -> None:
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        """Draw one grid card. Qt passes its own painter, so we never create one."""
         wallpaper: Wallpaper | None = index.data(Qt.UserRole)
         if wallpaper is None:
-            super().paint(option, index)
+            super().paint(painter, option, index)
             return
 
-        painter = QPainter(option.widget)
+        painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         selected = bool(option.state & QStyle.State_Selected)
         hovered = bool(option.state & QStyle.State_MouseOver)
@@ -310,17 +311,15 @@ class WallpaperDelegate(QStyledItemDelegate):
             text_rect.adjusted(4, 20, -4, 0), Qt.AlignLeft | Qt.AlignVCenter,
             metrics.elidedText(subtitle, Qt.ElideRight, text_rect.width()),
         )
+        painter.restore()
 
     def editorEvent(self, event, model, option, index) -> bool:  # noqa: N802
-        from PySide6.QtCore import QEvent
-
         if event.type() == QEvent.MouseButtonDblClick:
             wallpaper = index.data(Qt.UserRole)
             if wallpaper is not None:
                 self.double_clicked.emit(wallpaper)
             return True
-        if event.type() == QEvent.MouseButtonPress:
-            return index.model().setData(index, index.data(Qt.UserRole), Qt.UserRole + 1)
+        # Selection, hover and context menus all keep QListView's defaults.
         return super().editorEvent(event, model, option, index)
 
 
