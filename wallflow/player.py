@@ -283,6 +283,9 @@ class WallpaperPlayer(QObject):
                 f"Не удалось воспроизвести «{wallpaper.name}»: {reason or 'неизвестная причина'}"
             )
             return
+        # The factory only builds the widget; loading the file is a separate
+        # step and is what actually makes it play.
+        widget.set_source(wallpaper.path)
         if transition_ms:
             widget.setProperty("opacity", 0.0)
             animation = QPropertyAnimation(widget, b"windowOpacity", self)

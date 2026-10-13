@@ -19,6 +19,7 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QImage,
+    QImageReader,
     QLinearGradient,
     QPainter,
     QPainterPath,
@@ -113,47 +114,58 @@ class ImageWidget(WallpaperWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._image = QImage()
-        self._animation: Optional[QTimer] = None
+        self._reader: Optional[QImageReader] = None
+        self._animated = False
         self._animation_timer = QTimer(self)
         self._animation_timer.timeout.connect(self._next_frame)
 
     def set_source(self, path: Path | str) -> None:
         p = Path(path)
         self._stop_animation()
+        self._reader = None
         if not p.exists():
             self._image = QImage()
             self.update()
             return
-        image = QImage(str(p))
+
+        # supportsAnimation() lives on QImageReader, not QImage. Going through
+        # the reader is also what allows jumpToNextImage() to walk GIF frames.
+        reader = QImageReader(str(p))
+        image = reader.read()
         if image.isNull():
-            log.warning("Could not decode image %s", p)
+            log.warning("Could not decode image %s: %s", p, reader.errorString())
             self._image = QImage()
         else:
             self._image = image
-            if image.supportsAnimation():
-                self._start_animation(image)
+            if reader.supportsAnimation():
+                self._reader = reader
+                self._animated = True
+                self._animation_timer.start(max(20, image.animationDelay()))
+            else:
+                self._animated = False
         self._source = p
         self.update()
 
-    def _start_animation(self, image: QImage) -> None:
-        delay = max(20, image.animationDelay())
-        self._animation_timer.start(delay)
-
     def _stop_animation(self) -> None:
         self._animation_timer.stop()
+        self._animated = False
 
     def _next_frame(self) -> None:
         if not self._running:
             return
+        # Animated images are multi-frame; QImageReader has to drive them.
         if not self._image.jumpToNextImage():
-            self._image = QImage(str(self._source)) if self._source else QImage()
-            if not self._image.supportsAnimation():
+            if self._source:
+                reader = QImageReader(str(self._source))
+                self._image = reader.read()
+                self._reader = reader
+            if self._image.isNull() or not self._animated:
                 self._animation_timer.stop()
         self.update()
 
     def start(self) -> None:
         super().start()
-        if self._image.supportsAnimation() and not self._animation_timer.isActive():
+        if self._animated and not self._animation_timer.isActive():
             self._animation_timer.start(max(20, self._image.animationDelay()))
         self.update()
 

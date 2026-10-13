@@ -139,10 +139,13 @@ class VideoWidget(WallpaperWidget):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        rect = _fit_rect(
+        target = _fit_rect(
             (pixmap.width(), pixmap.height()), QRectF(self.rect()), self._fit, self._alignment
         )
-        painter.drawPixmap(rect, pixmap)
+        # QPainter has no drawPixmap(QRectF, QPixmap) overload - the scaled
+        # variant requires the source rectangle as a third argument.
+        painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+        painter.end()
 
     def _paint_placeholder(self) -> None:
         painter = QPainter(self)

@@ -63,14 +63,14 @@ def main() -> int:
 
     tmp = Path(paths.data_dir()).parent / "sample"
     tmp.mkdir(parents=True, exist_ok=True)
+    from PySide6.QtGui import QColor
+
     for index, colour in enumerate(("#3355aa", "#aa3355", "#33aa55", "#aa8833")):
         image = QImage(640, 360, QImage.Format_RGB32)
-        image.fill(Qt.transparent)
+        image.fill(QColor(colour))
         painter = QPainter(image)
-        painter.fillRect(0, 0, 640, 360, Qt.GlobalColor.transparent)
-        from PySide6.QtGui import QColor
-
-        painter.fillRect(0, 0, 640, 360, QColor(colour))
+        # Two tones, so a test can tell a real render from a blank surface.
+        painter.fillRect(0, 0, 320, 360, QColor("#101018"))
         painter.end()
         image.save(str(tmp / f"sample{index}.jpg"))
 
@@ -164,6 +164,67 @@ def main() -> int:
     check("forced native mode honoured",
           WallpaperPlayer(create_stack(), config)._decide_mode(
               _Kind.IMAGE, needs_per_monitor=True) == "native")
+    config.set("static_wallpaper_mode", "auto")
+
+    section("Renderer actually paints")
+    from PySide6.QtGui import QPixmap  # noqa: E402
+
+    from wallflow.live.renderer import ImageWidget, SceneWidget  # noqa: E402
+    from wallflow.live.video import VideoWidget  # noqa: E402
+
+    def renders(widget, label: str) -> None:
+        """Render a widget off-screen and check pixels actually appeared.
+
+        A paintEvent that raises (e.g. a wrong QPainter overload) leaves the
+        surface blank, which is exactly the failure these tests guard against.
+        """
+        widget.resize(160, 120)
+        canvas = QPixmap(160, 120)
+        canvas.fill(QColor("#000000"))
+        widget.render(canvas)
+        widget.stop()
+        colours = {canvas.toImage().pixel(x, y)
+                   for y in range(0, 120, 6) for x in range(0, 160, 6)}
+        check(f"{label} рисует", len(colours) > 1, f"однотонно: {colours}")
+
+    image_widget = ImageWidget()
+    image_widget.set_source(first.path)
+    renders(image_widget, "ImageWidget")
+
+    scene_widget = SceneWidget()
+    scene_widget.set_spec(BUILTIN_SCENES["Частицы"])
+    renders(scene_widget, "SceneWidget")
+
+    video_widget = VideoWidget(muted=True)
+    # No media file in the test: inject a frame so the paint path still runs.
+    # It needs two tones, otherwise a correct render still looks "flat".
+    fake = QPixmap(64, 36)
+    fake.fill(QColor("#0b1b33"))
+    frame_painter = QPainter(fake)
+    frame_painter.fillRect(32, 0, 32, 36, QColor(60, 127, 191))
+    frame_painter.end()
+    video_widget._receiver._pixmap = fake
+    renders(video_widget, "VideoWidget")
+
+    section("Window content is loaded")
+    # Regression: _render_in_window used to create the widget without ever
+    # calling set_source, so every wallpaper stayed empty.
+    config.set("static_wallpaper_mode", "window")
+    render_player = WallpaperPlayer(create_stack(), config)
+    render_player.refresh_monitors()
+    render_player.set_current(first)
+    slot = render_player._slots[0]
+    check("виджет создан", slot.window.content is not None)
+    check("источник загружен", getattr(slot.window.content, "_source", None) is not None,
+          str(getattr(slot.window.content, "_source", None)))
+    check("источник совпадает", str(getattr(slot.window.content, "_source", "")) == first.path)
+
+    scene_wallpaper = Wallpaper.from_path(scene_path)
+    scene_wallpaper.kind = _Kind.SCENE.value
+    render_player.set_current(scene_wallpaper)
+    scene_source = str(render_player._slots[0].window.content._source or "")
+    check("сцена загружена", scene_source == str(scene_path), scene_source)
+    render_player.shutdown()
     config.set("static_wallpaper_mode", "auto")
 
     section("Pause policies")
