@@ -309,6 +309,8 @@ class MainWindow(QMainWindow):
             theme.apply(QApplication.instance(), self._accent())
         elif key == "static_wallpaper_mode":
             self._controller._apply_now()
+        elif key in ("loop_videos", "video_audio"):
+            self._player._apply_playback_settings()
 
     # ------------------------------------------------------------------ misc
     def _say(self, message: str) -> None:

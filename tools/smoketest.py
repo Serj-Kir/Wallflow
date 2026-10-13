@@ -227,6 +227,28 @@ def main() -> int:
     render_player.shutdown()
     config.set("static_wallpaper_mode", "auto")
 
+    section("Video looping")
+    from wallflow.live.video import LOOPS_FOREVER, LOOPS_ONCE  # noqa: E402
+
+    check("LOOPS_FOREVER = -1", LOOPS_FOREVER == -1)
+    looping = VideoWidget(muted=True)
+    check("видео зациклено по умолчанию", looping.loops == LOOPS_FOREVER, str(looping.loops))
+    looping.set_loops(LOOPS_ONCE)
+    check("повтор отключается", looping.loops == LOOPS_ONCE)
+    looping.set_loops(LOOPS_FOREVER)
+    check("повтор включается обратно", looping.loops == LOOPS_FOREVER)
+
+    config.set("loop_videos", False)
+    config.set("video_audio", True)
+    settings_player = WallpaperPlayer(create_stack(), config)
+    check("конфиг выключает повтор", settings_player._loops == LOOPS_ONCE, str(settings_player._loops))
+    check("конфиг включает звук", settings_player._muted is False)
+    config.set("loop_videos", True)
+    config.set("video_audio", False)
+    settings_player._apply_playback_settings()
+    check("конфиг возвращает повтор", settings_player._loops == LOOPS_FOREVER)
+    check("конфиг возвращает без звука", settings_player._muted is True)
+
     section("Pause policies")
     controller.set_manual_pause(True)
     check("manual pause", controller.paused)

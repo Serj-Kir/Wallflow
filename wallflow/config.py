@@ -31,6 +31,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "close_to_tray": True,
     "check_updates": True,
     # --- Playback ----------------------------------------------------------
+    "loop_videos": True,             # restart videos instead of ending
+    "video_audio": False,            # wallpapers are silent by default
     "pause_on_fullscreen": True,
     "pause_on_lock": True,
     "pause_on_battery": False,

@@ -15,12 +15,13 @@ log = logging.getLogger(__name__)
 # Both ship in the standard PySide6 wheel, but the app must still start if a
 # minimal install is missing them.
 try:
-    from .video import VideoWidget
+    from .video import LOOPS_FOREVER, LOOPS_ONCE, VideoWidget
 
     VIDEO_AVAILABLE = True
     VIDEO_IMPORT_ERROR = ""
 except Exception as _exc:  # pragma: no cover - depends on the install
     VideoWidget = None  # type: ignore[assignment]
+    LOOPS_FOREVER, LOOPS_ONCE = -1, 1
     VIDEO_AVAILABLE = False
     VIDEO_IMPORT_ERROR = str(_exc)
 
@@ -39,6 +40,8 @@ __all__ = [
     "WebWidget",
     "VIDEO_AVAILABLE",
     "WEBENGINE_AVAILABLE",
+    "LOOPS_FOREVER",
+    "LOOPS_ONCE",
     "widget_for_kind",
     "create_widget",
     "capabilities",
@@ -46,7 +49,7 @@ __all__ = [
 
 
 def widget_for_kind(
-    kind: WallpaperKind, *, muted: bool = True, parent=None
+    kind: WallpaperKind, *, muted: bool = True, loops: int = LOOPS_FOREVER, parent=None
 ) -> Optional[WallpaperWidget]:
     """Instantiate the widget that can render ``kind``, or None if unsupported."""
     if kind is WallpaperKind.SCENE:
@@ -57,7 +60,7 @@ def widget_for_kind(
         if VideoWidget is None:
             log.warning("Video wallpaper requested but Qt Multimedia is missing: %s", VIDEO_IMPORT_ERROR)
             return None
-        return VideoWidget(muted=muted, parent=parent)
+        return VideoWidget(muted=muted, loops=loops, parent=parent)
     if kind is WallpaperKind.WEB:
         if WebWidget is None:
             log.warning("Web wallpaper requested but Qt Web Engine is missing: %s", WEBENGINE_IMPORT_ERROR)
@@ -66,14 +69,18 @@ def widget_for_kind(
     return None
 
 
-def create_widget(path: Path | str, *, muted: bool = True, parent=None) -> Optional[WallpaperWidget]:
+def create_widget(
+    path: Path | str, *, muted: bool = True, loops: int = LOOPS_FOREVER, parent=None
+) -> Optional[WallpaperWidget]:
     """Instantiate the right widget for a wallpaper on disk."""
     p = Path(path)
     if p.is_dir():
-        return widget_for_kind(WallpaperKind.WEB, muted=muted, parent=parent)
+        return widget_for_kind(WallpaperKind.WEB, muted=muted, loops=loops, parent=parent)
     if p.suffix.lower() == ".scene":
-        return widget_for_kind(WallpaperKind.SCENE, muted=muted, parent=parent)
-    return widget_for_kind(kind_for_suffix(p.suffix.lower()), muted=muted, parent=parent)
+        return widget_for_kind(WallpaperKind.SCENE, muted=muted, loops=loops, parent=parent)
+    return widget_for_kind(
+        kind_for_suffix(p.suffix.lower()), muted=muted, loops=loops, parent=parent
+    )
 
 
 def capabilities() -> dict[str, bool]:

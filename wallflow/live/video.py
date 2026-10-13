@@ -47,12 +47,23 @@ class _FrameReceiver(QObject):
         return self._size
 
 
+#: QMediaPlayer.setLoops() value that repeats the file forever.
+LOOPS_FOREVER = -1
+#: Play the file exactly once and then stop.
+LOOPS_ONCE = 1
+
+
 class VideoWidget(WallpaperWidget):
     """Loops a video file and paints it inside the wallpaper window."""
 
     error = Signal(str)
 
-    def __init__(self, muted: bool = True, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        muted: bool = True,
+        loops: int = LOOPS_FOREVER,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._muted = muted
         self._player = QMediaPlayer(self)
@@ -64,7 +75,7 @@ class VideoWidget(WallpaperWidget):
         self._receiver.frame_ready.connect(self.update)
         self._player.errorOccurred.connect(self._on_error)
         self._player.mediaStatusChanged.connect(self._on_status)
-        self._loops = 1
+        self._loops = loops
         self._last_error = ""
 
     # ------------------------------------------------------------------ api
@@ -77,6 +88,7 @@ class VideoWidget(WallpaperWidget):
         from PySide6.QtCore import QUrl
 
         self._player.setSource(QUrl.fromLocalFile(str(p.resolve())))
+        # Applied after setSource: a new source resets the loop counter.
         self._player.setLoops(self._loops)
         self.start()
 
@@ -85,17 +97,35 @@ class VideoWidget(WallpaperWidget):
         self._audio.setVolume(0.0 if muted else 0.5)
 
     def set_loops(self, loops: int) -> None:
-        """``-1`` loops forever; any positive number stops after that many."""
+        """``LOOPS_FOREVER`` repeats indefinitely, ``LOOPS_ONCE`` stops at the end."""
         self._loops = loops
         self._player.setLoops(loops)
+        if self._restart_needed():
+            self._rewind_and_play()
 
-    def set_muted_for_video(self, muted: bool) -> None:  # alias kept for clarity
-        self.set_muted(muted)
+    @property
+    def loops(self) -> int:
+        return self._loops
+
+    def _restart_needed(self) -> bool:
+        """True when playback stopped on the final frame and should roll over."""
+        return (
+            self._running
+            and self._player.mediaStatus() == QMediaPlayer.MediaStatus.EndOfMedia
+        )
+
+    def _rewind_and_play(self) -> None:
+        self._player.setPosition(0)
+        self._player.play()
 
     def start(self) -> None:
         super().start()
         if self._player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
             self._player.play()
+        if self._restart_needed():
+            # A previous run may have ended on the last frame; without this the
+            # widget would sit still while claiming to be playing.
+            self._rewind_and_play()
 
     def pause(self) -> None:
         super().pause()
@@ -124,6 +154,13 @@ class VideoWidget(WallpaperWidget):
     def _on_status(self, status) -> None:
         if status == QMediaPlayer.MediaStatus.LoadedMedia and not self._running:
             self._player.pause()
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+            # QMediaPlayer loops on its own, but it can still stop on the last
+            # frame (buffer hiccup, source reload). Rolling over here
+            # guarantees a wallpaper never freezes into a still image.
+            if self._loops == LOOPS_FOREVER and self._running:
+                self._player.setPosition(0)
+                self._player.play()
 
     def _on_error(self, error, message: str = "") -> None:
         detail = message or getattr(error, "errorString", lambda: "неизвестная ошибка")()

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QWidget
 from .engine.base import FitMode, WallpaperRequest
 from .live import capabilities as live_capabilities
 from .live import create_widget, unavailable_reason
+from .live.video import LOOPS_FOREVER, LOOPS_ONCE
 from .models import MonitorInfo, Wallpaper, WallpaperKind
 from .window import WallpaperPreview, WallpaperWindow
 
@@ -66,10 +67,33 @@ class WallpaperPlayer(QObject):
         self._current: Optional[Wallpaper] = None
         self._paused = False
         self._muted = True
+        self._loops = LOOPS_FOREVER
         self._transition_ms = DEFAULT_TRANSITION_MS
         self._animations: list[QPropertyAnimation] = []
         self._preview: Optional[WallpaperPreview] = None
         self._windows_visible = True
+        # Runs last: the config must win over the defaults assigned above.
+        self._apply_playback_settings()
+
+    # ------------------------------------------------------------- settings
+    def _apply_playback_settings(self) -> None:
+        """Read looping/mute preferences out of the config and push them out."""
+        self._loops = (
+            LOOPS_FOREVER if self._config.get("loop_videos", True) else LOOPS_ONCE
+        )
+        self._muted = not self._config.get("video_audio", False)
+        self.push_playback_settings()
+
+    def push_playback_settings(self) -> None:
+        """Apply the current mute/loop settings to every live widget."""
+        for slot in self._slots:
+            content = slot.window.content
+            if content is None:
+                continue
+            if hasattr(content, "set_muted"):
+                content.set_muted(self._muted)
+            if hasattr(content, "set_loops"):
+                content.set_loops(self._loops)
 
     # ------------------------------------------------------------- monitors
     def monitors(self) -> list[MonitorInfo]:
@@ -276,7 +300,9 @@ class WallpaperPlayer(QObject):
         wallpaper: Wallpaper,
         transition_ms: Optional[int] = None,
     ) -> None:
-        widget = create_widget(wallpaper.path, muted=self._muted)
+        widget = create_widget(
+            wallpaper.path, muted=self._muted, loops=self._loops
+        )
         if widget is None:
             reason = unavailable_reason(wallpaper.wallpaper_kind)
             self.playback_error.emit(
@@ -338,6 +364,13 @@ class WallpaperPlayer(QObject):
             content = slot.window.content
             if hasattr(content, "set_muted"):
                 content.set_muted(muted)
+
+    def set_loops(self, loops: int) -> None:
+        self._loops = loops
+        for slot in self._slots:
+            content = slot.window.content
+            if hasattr(content, "set_loops"):
+                content.set_loops(loops)
 
     def set_max_fps(self, fps: int) -> None:
         for slot in self._slots:

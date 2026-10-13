@@ -158,6 +158,14 @@ class SettingsView(QWidget):
         )
         self._interactive_web = QCheckBox("HTML-обои реагируют на клики мышью")
         self._interactive_web.toggled.connect(lambda v: self._set("interactive_web_wallpapers", v))
+        self._loop_videos = QCheckBox("Повторять видео бесконечно")
+        self._loop_videos.setToolTip(
+            "Если выключить, видео проиграется один раз и остановится"
+        )
+        self._loop_videos.toggled.connect(self._on_video_setting_changed)
+        self._video_audio = QCheckBox("Звук в видео-обоях")
+        self._video_audio.setToolTip("Обычно обои идут без звука — так их не слышно")
+        self._video_audio.toggled.connect(self._on_video_setting_changed)
 
         pause_box, pause_layout = section("Автоматическая пауза")
         for widget in (self._pause_fullscreen, self._pause_lock, self._pause_remote, self._pause_idle):
@@ -187,10 +195,21 @@ class SettingsView(QWidget):
         mode_layout.addWidget(mode_hint)
         mode_layout.addWidget(self._interactive_web)
 
+        video_box, video_layout = section("Видео")
+        video_layout.addWidget(self._loop_videos)
+        video_layout.addWidget(self._video_audio)
+        video_hint = QLabel(
+            "Сцены и HTML-обои повторяются всегда — они зациклены по своей природе."
+        )
+        video_hint.setObjectName("Hint")
+        video_hint.setWordWrap(True)
+        video_layout.addWidget(video_hint)
+
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(pause_box)
         layout.addWidget(mode_box)
+        layout.addWidget(video_box)
         layout.addStretch()
         return page
 
@@ -354,6 +373,8 @@ class SettingsView(QWidget):
             max(0, self._static_mode.findData(cfg.get("static_wallpaper_mode", "auto")))
         )
         self._interactive_web.setChecked(bool(cfg.get("interactive_web_wallpapers", True)))
+        self._loop_videos.setChecked(bool(cfg.get("loop_videos", True)))
+        self._video_audio.setChecked(bool(cfg.get("video_audio", False)))
 
         self._max_fps.setValue(int(cfg.get("max_fps", 30)))
         self._memory_limit.setValue(int(cfg.get("memory_limit_mb", 1024)))
@@ -432,6 +453,19 @@ class SettingsView(QWidget):
 
     def _on_thumb_size(self) -> None:
         self._set("thumb_size", int(self._thumb_size.currentData()))
+
+    def _on_video_setting_changed(self) -> None:
+        """Save both video toggles and tell the player to apply them at once."""
+        if self._loading:
+            return
+        self._config.update(
+            {
+                "loop_videos": self._loop_videos.isChecked(),
+                "video_audio": self._video_audio.isChecked(),
+            }
+        )
+        self.settings_changed.emit("loop_videos", self._loop_videos.isChecked())
+        self.status.emit("Настройки видео сохранены")
 
     def _on_fps_changed(self, value: int) -> None:
         self._set("max_fps", value)
