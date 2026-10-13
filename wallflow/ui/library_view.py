@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QItemSelection, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QItemSelection, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -249,6 +251,53 @@ class LibraryView(QWidget):
         self.apply_requested.emit(wallpaper)
 
     # ----------------------------------------------------------- operations
+    def _resolution_lines(self, wallpaper: Wallpaper) -> list[str]:
+        """Image/video resolution, plus how it compares to the main monitor."""
+        size = None
+        try:
+            from PySide6.QtGui import QImage
+
+            if wallpaper.wallpaper_kind is WallpaperKind.IMAGE:
+                image = QImage(wallpaper.path)
+                if not image.isNull():
+                    size = (image.width(), image.height())
+            else:
+                from PySide6.QtMultimedia import QMediaPlayer
+
+                player = QMediaPlayer()
+                player.setSource(QUrl.fromLocalFile(wallpaper.path))
+                for _ in range(60):
+                    meta = player.metaData()
+                    if meta.isEmpty():
+                        QApplication.processEvents()
+                        time.sleep(0.05)
+                        continue
+                    track = meta.value(meta.videoTrack()) if hasattr(meta, "videoTrack") else None
+                    if track is not None and track.width() > 0:
+                        size = (track.width(), track.height())
+                        break
+                    QApplication.processEvents()
+                    time.sleep(0.05)
+                player.stop()
+        except Exception:  # noqa: BLE001 - probing must never break the dialog
+            return []
+
+        if not size:
+            return []
+
+        lines = [f"Разрешение: {size[0]}×{size[1]}"]
+        monitors = self._controller.monitors() if self._controller else []
+        best = max((m for m in monitors), key=lambda m: m.width * m.height, default=None)
+        if best and best.width > 0:
+            if size[0] < best.width:
+                lines.append(
+                    f"<span style='color:#c69026'>Меньше монитора ({best.width}×{best.height}) — "
+                    f"при показе будет растянуто в {best.width / size[0]:.1f} раз и станет размытым</span>"
+                )
+            else:
+                lines.append(f"Монитор: {best.width}×{best.height} — разрешения хватает")
+        return lines
+
     def _on_context_menu(self, pos) -> None:
         wallpaper = self.current()
         menu = QMenu(self)
@@ -338,6 +387,7 @@ class LibraryView(QWidget):
             lines.append(f"Размер: {human_size(wallpaper.file_path.stat().st_size)}")
         except OSError:
             pass
+        lines.extend(self._resolution_lines(wallpaper))
         if wallpaper.author:
             lines.append(f"Автор: {wallpaper.author}")
         if wallpaper.description:

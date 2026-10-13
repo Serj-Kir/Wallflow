@@ -147,6 +147,19 @@ class VideoWidget(WallpaperWidget):
     def playback_state(self) -> QMediaPlayer.PlaybackState:
         return self._player.playbackState()
 
+    def source_size(self) -> QSize:
+        """Native pixel size of the video, independent of the widget size.
+
+        Compared against the monitor size this tells the user whether the file
+        is actually sharp enough for their screen. Returns an invalid size until
+        the first frame has been decoded.
+        """
+        return self._receiver.size()
+
+    def is_frame_known(self) -> bool:
+        size = self._receiver.size()
+        return size.width() > 0 and size.height() > 0
+
     def player(self) -> QMediaPlayer:
         return self._player
 

@@ -72,6 +72,8 @@ class WallpaperPlayer(QObject):
         self._animations: list[QPropertyAnimation] = []
         self._preview: Optional[WallpaperPreview] = None
         self._windows_visible = True
+        # Wallpaper+monitor pairs already reported as too low-res.
+        self._warned_upscaled: set[tuple[str, str]] = set()
         # Runs last: the config must win over the defaults assigned above.
         self._apply_playback_settings()
 
@@ -330,6 +332,48 @@ class WallpaperPlayer(QObject):
             slot.window.start_content()
         if self._config.get("interactive_web_wallpapers", True) and wallpaper.wallpaper_kind is WallpaperKind.WEB:
             slot.window.set_clickable(True)
+        self._warn_if_upscaled(slot, wallpaper, widget)
+
+    def _warn_if_upscaled(self, slot: MonitorSlot, wallpaper: Wallpaper, widget) -> None:
+        """Tell the user when a video is too small for the screen it is shown on.
+
+        The blur is unavoidable - nothing can invent detail the file does not
+        have - so the useful thing is to say where the problem comes from.
+        """
+        if wallpaper.wallpaper_kind is not WallpaperKind.VIDEO:
+            return
+        key = (wallpaper.id, slot.id)
+        if key in self._warned_upscaled:
+            return
+
+        known = getattr(widget, "is_frame_known", None)
+        if callable(known) and not known():
+            # Nothing decoded yet. The native size is only knowable from the
+            # first frame, so re-check once it arrives.
+            widget._receiver.frame_ready.connect(
+                lambda _slot=slot, _wp=wallpaper, _w=widget: self._warn_if_upscaled(
+                    _slot, _wp, _w
+                )
+            )
+            return
+
+        report = getattr(widget, "source_size", None)
+        source = report() if callable(report) else None
+        if source is None or source.width() <= 0:
+            return
+
+        target_w = slot.info.width or self._slots[0].info.width
+        target_h = slot.info.height or self._slots[0].info.height
+        if target_w <= 0 or source.width() >= target_w:
+            return
+
+        self._warned_upscaled.add(key)
+        factor = target_w / source.width()
+        self.playback_error.emit(
+            f"«{wallpaper.name}»: видео {source.width()}×{source.height()}, "
+            f"а монитор {target_w}×{target_h} — картинка растягивается в {factor:.1f} раз, "
+            f"поэтому будет размытой. Возьмите ролик в 1080p или 4K."
+        )
 
     def _hide_all_windows(self) -> None:
         for slot in self._slots:

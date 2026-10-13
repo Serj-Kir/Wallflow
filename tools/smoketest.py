@@ -227,6 +227,22 @@ def main() -> int:
     render_player.shutdown()
     config.set("static_wallpaper_mode", "auto")
 
+    section("Kind detection")
+    check(".jpg -> фото", Wallpaper.from_path(first.path).wallpaper_kind is WallpaperKind.IMAGE)
+    check(
+        ".scene -> сцена",
+        Wallpaper.from_path(scene_path).wallpaper_kind is WallpaperKind.SCENE,
+    )
+    check(
+        "папка -> HTML-проект",
+        Wallpaper.from_path(paths.wallpaper_dir()).wallpaper_kind is WallpaperKind.WEB,
+    )
+    check(
+        "явный kind важнее определения",
+        Wallpaper.from_path(first.path, kind=WallpaperKind.VIDEO.value).wallpaper_kind
+        is WallpaperKind.VIDEO,
+    )
+
     section("Video looping")
     from wallflow.live.video import LOOPS_FOREVER, LOOPS_ONCE  # noqa: E402
 

@@ -62,6 +62,13 @@ def kind_for_suffix(suffix: str) -> WallpaperKind:
     return WallpaperKind.IMAGE
 
 
+def _kind_for_path(path: Path) -> WallpaperKind:
+    """A folder holding an index.html is a web wallpaper, not an image."""
+    if path.is_dir() or path.name.lower() == "index.html":
+        return WallpaperKind.WEB
+    return kind_for_suffix(path.suffix.lower())
+
+
 class TransitionKind(str, Enum):
     NONE = "none"
     FADE = "fade"
@@ -98,6 +105,9 @@ class Wallpaper:
     @classmethod
     def from_path(cls, path: Path | str, **kwargs: Any) -> "Wallpaper":
         p = Path(path).expanduser().resolve()
+        # Detect the kind from the file itself so callers do not have to repeat
+        # it; an explicit ``kind`` in kwargs still wins.
+        kwargs.setdefault("kind", _kind_for_path(p).value)
         return cls(id=id_for_path(p), path=str(p), name=p.stem, **kwargs)
 
     @property
