@@ -277,12 +277,18 @@ class WallpaperDelegate(QStyledItemDelegate):
             font.setPointSize(9)
             painter.setFont(font)
             metrics = painter.fontMetrics()
-            text_rect = metrics.boundingRect(badge).adjusted(6, 2, -6, -2)
-            chip = QRect(image_rect.left() + 6, image_rect.bottom() - text_rect.height() - 6,
-                         text_rect.width(), text_rect.height())
+            # adjusted() grows the rect: -6/-3 on the left/top and +6/+3 on
+            # the right/bottom gives the chip its padding.
+            chip_size = metrics.boundingRect(badge).adjusted(-7, -3, 7, 3)
+            chip = QRect(
+                image_rect.left() + 7,
+                image_rect.bottom() - chip_size.height() - 7,
+                chip_size.width(),
+                chip_size.height(),
+            )
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(0, 0, 0, 170))
-            painter.drawRoundedRect(chip, 6, 6)
+            painter.setBrush(QColor(0, 0, 0, 175))
+            painter.drawRoundedRect(chip, chip.height() / 2, chip.height() / 2)
             painter.setPen(QColor("#dfe3ec"))
             painter.drawText(chip, Qt.AlignCenter, badge)
 

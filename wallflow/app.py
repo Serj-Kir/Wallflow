@@ -54,10 +54,28 @@ def main(argv: list[str] | None = None) -> int:
     log = logging.getLogger("wallflow")
 
     if args.quit:
-        _signal_running_instance()
-        return 0
+        from . import instance
+
+        if instance.terminate():
+            print("Закрытие Wallflow…")
+            return 0
+        print("Wallflow не запущен")
+        return 1
 
     paths.ensure_dirs()
+
+    # Two instances would each draw their own desktop window and fight over
+    # the wallpaper, so only the first one is allowed to run.
+    from . import instance as instance_guard
+
+    other = instance_guard.claim()
+    if other:
+        print(
+            f"Wallflow уже запущен (процесс {other}).\n"
+            "Закройте его или выполните: python -m wallflow --quit",
+            file=sys.stderr,
+        )
+        return 1
 
     # Qt Web Engine must be told about the sandbox before QApplication exists,
     # otherwise Chromium refuses to start in some containers.
@@ -178,6 +196,16 @@ def _apply_one(path_str: str, config, backend, player, app) -> int:
     visible = any(slot.window.isVisible() for slot in player._slots)
     print(f"Режим: {'своё окно' if visible else 'системный'}")
 
+    from . import instance
+
+    # --set has no main window but still needs a clean shutdown path.
+    app.aboutToQuit.connect(instance.release)
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(signum, lambda *_: app.quit())
+        except (ValueError, OSError):
+            pass
+
     # An animated wallpaper only stays on screen while the process lives.
     if wallpaper.is_animated:
         print("Анимация идёт, пока работает эта команда (Ctrl+C — остановить).")
@@ -187,25 +215,24 @@ def _apply_one(path_str: str, config, backend, player, app) -> int:
 
 
 def _install_signal_handling(app, window) -> None:
-    """Make Ctrl+C work even though Qt owns the main loop."""
-    try:
-        signal.signal(signal.SIGINT, lambda *_: app.quit())
-    except (ValueError, OSError):
-        pass
+    """Let Ctrl+C and ``--quit`` shut the app down cleanly.
 
+    Qt only handles SIGINT. Without a SIGTERM handler the process would die
+    mid-shutdown, leaving the instance lock behind and skipping the config
+    flush, so both are routed through ``app.quit()``.
+    """
+    from . import instance
 
-def _signal_running_instance() -> None:
-    """Ask an already-running Wallflow to quit (used by ``--quit``)."""
-    marker = paths.data_dir() / "instance.pid"
-    if not marker.exists():
-        print("Wallflow не запущен")
-        return
-    try:
-        pid = int(marker.read_text(encoding="utf-8").strip())
-        os.kill(pid, signal.SIGTERM)
-        print("Закрытие Wallflow…")
-    except (OSError, ValueError) as exc:
-        print(f"Не удалось закрыть Wallflow: {exc}", file=sys.stderr)
+    def request_quit(*_args) -> None:
+        app.quit()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(signum, request_quit)
+        except (ValueError, OSError):
+            pass  # not the main thread, or the signal is unavailable here
+
+    app.aboutToQuit.connect(instance.release)
 
 
 if __name__ == "__main__":  # pragma: no cover

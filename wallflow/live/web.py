@@ -224,12 +224,15 @@ class WebWidget(WallpaperWidget):
             self._last_error = "Не удалось загрузить страницу"
             self.error.emit(self._last_error)
             return
-        # Let the page know Wallflow is driving it, so authors can pause
-        # expensive work when the wallpaper is not the active profile.
+        # Let the page know Wallflow is driving it, so authors can stop expensive
+        # work when the wallpaper is not the active profile.
         self._view.page().runJavaScript(
-            "window.wallflow = window.wallflow || { "
-            "get version(){ return '1.0'; }, "
-            "onPause(fn){ (window.__wfPause = window.__wfPause||[]).push(fn); } };"
+            "window.wallflow = window.wallflow || {};"
+            "Object.defineProperty(window.wallflow,'version',{get:function(){return '1.0';}});"
+            "window.wallflow.onPause=function(fn){"
+            "  (window.__wfPause=window.__wfPause||[]).push(fn);};"
+            "window.wallflow.onResume=function(fn){"
+            "  (window.__wfResume=window.__wfResume||[]).push(fn);};"
         )
 
     def _resize_child(self) -> None:

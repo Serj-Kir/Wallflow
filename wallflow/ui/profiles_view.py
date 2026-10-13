@@ -90,20 +90,23 @@ class MonitorCard(QGroupBox):
         self._picker.clear()
         for wallpaper in wallpapers[:200]:  # enough to choose from without stalling
             entry = QListWidgetItem()
-            entry.setData(Qt.UserRole, wallpaper.id)
+            # The delegate paints from a Wallpaper, not an id.
+            entry.setData(Qt.UserRole, wallpaper)
             entry.setToolTip(wallpaper.name)
             self._picker.addItem(entry)
 
     def selected_id(self) -> Optional[str]:
         item = self._picker.currentItem()
-        return item.data(Qt.UserRole) if item else None
+        wallpaper = item.data(Qt.UserRole) if item else None
+        return wallpaper.id if wallpaper is not None else None
 
     def select(self, wallpaper_id: Optional[str]) -> None:
         if not wallpaper_id:
             self._picker.clearSelection()
             return
         for row in range(self._picker.count()):
-            if self._picker.item(row).data(Qt.UserRole) == wallpaper_id:
+            wallpaper = self._picker.item(row).data(Qt.UserRole)
+            if wallpaper is not None and wallpaper.id == wallpaper_id:
                 self._picker.selectRow(row)
                 return
 

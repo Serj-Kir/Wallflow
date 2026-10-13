@@ -212,7 +212,8 @@ class PlaylistsView(QWidget):
             if wallpaper is None:
                 continue
             entry = QListWidgetItem()
-            entry.setData(Qt.UserRole, wallpaper.id)
+            # The delegate paints from a Wallpaper, not an id.
+            entry.setData(Qt.UserRole, wallpaper)
             entry.setToolTip(wallpaper.path)
             self._contents.addItem(entry)
         self._shuffle.setCurrentIndex(1 if playlist.shuffle else 0)

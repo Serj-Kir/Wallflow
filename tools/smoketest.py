@@ -15,7 +15,7 @@ os.environ.setdefault("WALLFLOW_DATA_DIR", tempfile.mkdtemp(prefix="wallflow-smo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import Qt, QTimer  # noqa: E402
+from PySide6.QtCore import QEventLoop, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QImage, QPainter  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -31,6 +31,13 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 
 def section(title: str) -> None:
     print(f"\n{title}")
+
+
+def settle(ms: int = 250) -> None:
+    """Let Qt process events so pending paints actually happen."""
+    loop = QEventLoop()
+    QTimer.singleShot(ms, loop.quit)
+    loop.exec()
 
 
 def main() -> int:
@@ -293,6 +300,33 @@ def main() -> int:
     window.show_page("library")
     check("library grid populated", window._library_view._model.rowCount() == len(library),
           str(window._library_view._model.rowCount()))
+
+    # Regression: pages could construct fine and still crash while painting,
+    # because a delegate was handed an id where it expected a Wallpaper. Forcing
+    # a real paint of every page is what catches that.
+    section("Every page renders")
+    grid_pages = (
+        ("library", window._library_view),
+        ("playlists", window._playlists_view),
+        ("profiles", window._profiles_view),
+    )
+    for key, view in grid_pages:
+        window.show_page(key)
+        if key == "playlists":
+            playlist = controller.add_playlist("Отрисовка", [first.id])
+            controller.save_playlists()
+            view.reload()
+        if key == "profiles":
+            view.reload()
+        settle()
+        pixmap = view.grab()
+        check(f"страница '{key}' отрисована", not pixmap.isNull() and pixmap.width() > 0)
+
+    for key in ("sources", "schedule", "settings"):
+        window.show_page(key)
+        settle(200)
+        check(f"страница '{key}' отрисована", window.grab().width() > 0)
+    window.show_page("library")
 
     from wallflow.ui.tray import app_icon
 
