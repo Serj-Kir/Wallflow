@@ -32,6 +32,63 @@
 
 ---
 
+## C# / Avalonia port
+
+A cross-platform C# application is being developed alongside the original Python version:
+
+```powershell
+dotnet run --project .\src\Wallflow.App\Wallflow.App.csproj
+```
+
+Run the migrated-core tests with:
+
+```powershell
+dotnet test .\src\Wallflow.App.Tests\Wallflow.App.Tests.csproj
+```
+
+The C# version currently includes an Avalonia desktop shell; persistent wallpaper library,
+search, favourites, folder scanning and import; profile, playlist, and schedule management;
+online wallpaper providers; settings and system autostart; pause policies; static wallpaper
+application on Windows, macOS, and selected Linux desktops; and animated scene previews. It
+also has live image, scene, video, and HTML renderers, per-monitor wallpaper surfaces, a system
+tray, and global hotkeys on Windows and X11. The C# configuration and library files use the
+same JSON names as the Python version. Its settings page includes automatic-pause thresholds,
+startup/tray behavior, video looping and audio, and HTML mouse interaction. Per-monitor image
+assignments support fill, fit, stretch, center, and tile modes with alignment controls.
+The playlist UI supports ordered contents, shuffle, intervals, and no-transition/fade options.
+Schedule rules can be edited by weekday, time range, enabled state, and priority.
+Profiles support duplication (including per-monitor assignments and accent color),
+renaming, selecting a playlist, and choosing a startup profile.
+The library view can filter by wallpaper type and favourites, and edit names, authors,
+descriptions, and tags without modifying the source files.
+Static images can use the native desktop wallpaper API, an application surface, or automatic
+selection; explicit per-monitor assignments continue to use application surfaces. Scene rendering
+also observes the configured maximum frame rate.
+Animated GIFs are decoded and played on live wallpaper surfaces.
+On GNOME and Cinnamon Wayland sessions, static wallpapers use the desktop's GSettings schema
+(with a dconf fallback), including GNOME's dark-mode image and supported fit modes. Live wallpaper
+surfaces and per-monitor desktop placement are not available on these compositors through ordinary
+application windows; this Wayland integration still needs a GUI smoke test on Linux.
+
+The C# app supports `--version`, `--help`, `--data-dir`, `--set`, `--profile`,
+`--list-monitors`, `--reset-settings`, `--minimized` / `--hidden`, `--verbose`, and `--quit`.
+`--quit` sends a local per-user request to the running instance. The `--set` command keeps
+animated wallpapers running until the app is closed; static images are applied through the
+desktop wallpaper API and the command then exits.
+
+This is still an incremental port, not a verified replacement for the Python application.
+Desktop-layer placement, multi-monitor behavior, tray integration, global shortcuts, and
+video/HTML playback have not yet had a full GUI smoke test on the supported desktop platforms.
+Windows and macOS video runtimes are included by the application packages; Linux video playback
+requires a compatible system LibVLC installation. HTML playback uses the operating system's
+native web-view engine (WebView2 on Windows, WKWebView on macOS, and WebKitGTK/WPE on Linux),
+which may need to be installed separately. Linux desktop-layer behavior varies by compositor;
+Wayland support is especially limited and is not guaranteed. Keep the Python implementation for
+workflows that require verified platform behavior until the C# port has been tested on the
+target desktop.
+
+---
+
 ## Установка
 
 ### Linux
