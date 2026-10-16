@@ -40,3 +40,8 @@ logs/
 # Build artefacts
 wallflow.spec.bak
 packaging/output/
+
+# .NET
+**/bin/
+**/obj/
+.vs/

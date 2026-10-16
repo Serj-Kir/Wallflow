@@ -1,0 +1,334 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:core="using:Wallflow.App.Core"
+        xmlns:sources="using:Wallflow.App.Core.Sources"
+        x:Class="Wallflow.App.MainWindow"
+        Title="Wallflow"
+        Width="1120"
+        Height="720"
+        MinWidth="900"
+        MinHeight="600"
+        Background="#17181D">
+  <Grid ColumnDefinitions="190,*">
+    <Border Grid.Column="0" Background="#202127" Padding="16">
+      <StackPanel Spacing="10">
+        <TextBlock Text="Wallflow" FontSize="24" FontWeight="Bold" Margin="4,8,0,0" />
+        <TextBlock Text="C# edition" Foreground="#A7A9B3" Margin="4,0,0,14" />
+        <Button Content="Библиотека" Tag="library" Click="NavigateClick" HorizontalContentAlignment="Left" />
+        <Button Content="Источники" Tag="sources" Click="NavigateClick" HorizontalContentAlignment="Left" />
+        <Button Content="Плейлисты" Tag="playlists" Click="NavigateClick" HorizontalContentAlignment="Left" />
+        <Button Content="Профили" Tag="profiles" Click="NavigateClick" HorizontalContentAlignment="Left" />
+        <Button Content="Расписание" Tag="schedule" Click="NavigateClick" HorizontalContentAlignment="Left" />
+        <Button Content="Настройки" Tag="settings" Click="NavigateClick" HorizontalContentAlignment="Left" />
+        <Border Height="1" Background="#3A3B42" Margin="0,12" />
+        <TextBlock Text="Перенос функций продолжается. Python-версия сохранена рядом." TextWrapping="Wrap" Foreground="#A7A9B3" />
+      </StackPanel>
+    </Border>
+
+    <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="24">
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+        <TextBlock Name="PageTitle" Text="Библиотека обоев" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="Добавить файлы…" Click="AddFilesClick" />
+        <Button Grid.Column="2" Content="Добавить папку…" Click="AddFolderClick" />
+      </Grid>
+
+      <Grid Grid.Row="1" Margin="0,16,0,12">
+        <Grid Name="LibraryPage" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="10">
+          <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="10">
+            <TextBox Name="SearchBox" PlaceholderText="Поиск по названию и пути" TextChanged="SearchTextChanged" />
+            <ComboBox Name="WallpaperKindFilterBox" Grid.Column="1" Width="140"
+                      SelectionChanged="WallpaperFilterChanged">
+              <ComboBoxItem Content="Все форматы" Tag="all" />
+              <ComboBoxItem Content="Изображения" Tag="image" />
+              <ComboBoxItem Content="Видео" Tag="video" />
+              <ComboBoxItem Content="HTML" Tag="web" />
+              <ComboBoxItem Content="Сцены" Tag="scene" />
+            </ComboBox>
+            <CheckBox Name="FavouritesOnlyBox" Grid.Column="2" Content="Избранное"
+                      VerticalAlignment="Center" Click="WallpaperFilterChanged" />
+            <Button Grid.Column="3" Content="Сканировать" Click="ScanClick" />
+          </Grid>
+          <ListBox Name="WallpaperList" Grid.Row="1" SelectionChanged="WallpaperSelectionChanged"
+                   Background="#202127" BorderBrush="#373840" BorderThickness="1">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="core:Wallpaper">
+                <Grid ColumnDefinitions="*,Auto" Margin="8">
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Path}" FontSize="12" Foreground="#A7A9B3" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <TextBlock Grid.Column="1" Text="{Binding Kind}" Foreground="#A7A9B3" VerticalAlignment="Center" Margin="12,0,4,0" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <Grid Grid.Row="2" ColumnDefinitions="*,*,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+            <TextBox Name="WallpaperNameBox" PlaceholderText="Название" />
+            <TextBox Name="WallpaperAuthorBox" Grid.Column="1" PlaceholderText="Автор" />
+            <TextBox Name="WallpaperTagsBox" Grid.Column="2" PlaceholderText="Теги через запятую" />
+            <TextBox Name="WallpaperDescriptionBox" Grid.Row="1" Grid.ColumnSpan="3" PlaceholderText="Описание" />
+            <Button Grid.Row="1" Grid.Column="3" Content="Сохранить описание" Click="SaveWallpaperMetadataClick" />
+          </Grid>
+          <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+            <Button Name="FavoriteButton" Content="В избранное" Click="FavoriteClick" IsEnabled="False" />
+            <Button Name="PreviewSceneButton" Content="Предпросмотр" Click="PreviewSceneClick" IsEnabled="False" />
+            <Button Name="ApplyButton" Content="Применить обои" Click="ApplyClick" IsEnabled="False" />
+          </StackPanel>
+        </Grid>
+
+        <Grid Name="ProfilesPage" IsVisible="False" RowDefinitions="Auto,*,Auto,Auto,Auto" RowSpacing="10">
+          <TextBlock Text="Профили сохраняют обои и наборы для быстрого переключения." Foreground="#A7A9B3" />
+          <ListBox Name="ProfilesList" Grid.Row="1" SelectionChanged="ProfileSelectionChanged"
+                   Background="#202127" BorderBrush="#373840" BorderThickness="1">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="core:Profile">
+                <StackPanel Margin="8" Spacing="3">
+                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding WallpaperId}" FontSize="12" Foreground="#A7A9B3" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10">
+            <TextBox Name="ProfileNameBox" PlaceholderText="Название профиля" />
+            <Button Grid.Column="1" Content="Создать" Click="AddProfileClick" />
+            <Button Grid.Column="2" Content="Дублировать" Click="DuplicateProfileClick" />
+            <Button Grid.Column="3" Content="Активировать" Click="ActivateProfileClick" />
+            <Button Grid.Column="4" Content="Назначить выбранные обои" Click="SetProfileWallpaperClick" />
+            <Button Grid.Column="5" Content="Удалить" Click="RemoveProfileClick" />
+          </Grid>
+          <WrapPanel Grid.Row="3" Orientation="Horizontal">
+            <TextBox Name="ProfileEditNameBox" Width="180" PlaceholderText="Имя выбранного профиля" />
+            <Button Content="Переименовать" Click="RenameProfileClick" />
+            <ComboBox Name="ProfilePlaylistBox" Width="200" PlaceholderText="Плейлист профиля">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="core:Playlist">
+                  <TextBlock Text="{Binding Name}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Content="Назначить плейлист" Click="SetProfilePlaylistClick" />
+            <ComboBox Name="StartupProfileBox" Width="200" PlaceholderText="Профиль при запуске">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="core:Profile">
+                  <TextBlock Text="{Binding Name}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Content="Запускать выбранный профиль" Click="SetStartupProfileClick" />
+            <Button Content="Очистить автопрофиль" Click="ClearStartupProfileClick" />
+          </WrapPanel>
+          <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="8">
+            <ComboBox Name="ProfileMonitorBox" Width="240" SelectionChanged="ProfileMonitorSelectionChanged" />
+            <ComboBox Name="ProfileMonitorFitBox" Grid.Column="1" Width="130"
+                      SelectionChanged="ProfileMonitorFitSelectionChanged">
+              <ComboBoxItem Content="Заполнить" Tag="fill" />
+              <ComboBoxItem Content="Вписать" Tag="fit" />
+              <ComboBoxItem Content="Растянуть" Tag="stretch" />
+              <ComboBoxItem Content="По центру" Tag="center" />
+              <ComboBoxItem Content="Плиткой" Tag="tile" />
+            </ComboBox>
+            <ComboBox Name="ProfileMonitorAlignmentBox" Grid.Column="2" Width="140"
+                      SelectionChanged="ProfileMonitorFitSelectionChanged">
+              <ComboBoxItem Content="По центру" Tag="center" />
+              <ComboBoxItem Content="Сверху" Tag="top" />
+              <ComboBoxItem Content="Снизу" Tag="bottom" />
+              <ComboBoxItem Content="Слева" Tag="left" />
+              <ComboBoxItem Content="Справа" Tag="right" />
+              <ComboBoxItem Content="Сверху слева" Tag="top-left" />
+              <ComboBoxItem Content="Сверху справа" Tag="top-right" />
+              <ComboBoxItem Content="Снизу слева" Tag="bottom-left" />
+              <ComboBoxItem Content="Снизу справа" Tag="bottom-right" />
+            </ComboBox>
+            <TextBlock Name="ProfileMonitorAssignmentText" Grid.Column="3" VerticalAlignment="Center"
+                       Foreground="#A7A9B3" TextTrimming="CharacterEllipsis" />
+            <Button Grid.Column="4" Content="Назначить выбранные обои" Click="AssignMonitorWallpaperClick" />
+            <Button Grid.Column="5" Content="Следовать основному" Click="ClearMonitorWallpaperClick" />
+          </Grid>
+        </Grid>
+
+        <Grid Name="PlaylistsPage" IsVisible="False" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="10">
+          <TextBlock Text="Плейлисты хранят последовательность обоев и интервал переключения." Foreground="#A7A9B3" />
+          <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="10">
+            <ListBox Name="PlaylistsList" SelectionChanged="PlaylistSelectionChanged"
+                     Background="#202127" BorderBrush="#373840" BorderThickness="1">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="core:Playlist">
+                  <StackPanel Margin="8" Spacing="3">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Items.Count}" FontSize="12" Foreground="#A7A9B3" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <Grid Grid.Column="1" RowDefinitions="*,Auto">
+              <ListBox Name="PlaylistItemsList" SelectionMode="Multiple"
+                       Background="#202127" BorderBrush="#373840" BorderThickness="1">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="core:Wallpaper">
+                    <StackPanel Margin="8" Spacing="3">
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding Path}" FontSize="12" Foreground="#A7A9B3" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                <Button Content="↑" Click="MovePlaylistItemUpClick" />
+                <Button Content="↓" Click="MovePlaylistItemDownClick" />
+                <Button Content="Убрать выбранные" Click="RemovePlaylistItemsClick" />
+                <Button Content="Добавить выбранные обои из библиотеки" Click="SavePlaylistClick" />
+              </StackPanel>
+            </Grid>
+          </Grid>
+          <WrapPanel Grid.Row="2" Orientation="Horizontal">
+            <TextBlock Text="Интервал, сек:" VerticalAlignment="Center" />
+            <TextBox Name="PlaylistIntervalBox" Width="90" />
+            <CheckBox Name="PlaylistShuffleBox" Content="Случайный порядок" VerticalAlignment="Center" />
+            <TextBlock Text="Переход:" VerticalAlignment="Center" />
+            <ComboBox Name="PlaylistTransitionBox" Width="150">
+              <ComboBoxItem Content="Без перехода" Tag="none" />
+              <ComboBoxItem Content="Затухание" Tag="fade" />
+            </ComboBox>
+            <TextBlock Text="Длительность, мс:" VerticalAlignment="Center" />
+            <TextBox Name="PlaylistTransitionMsBox" Width="80" />
+          </WrapPanel>
+          <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+            <TextBox Name="PlaylistNameBox" PlaceholderText="Название плейлиста" />
+            <Button Grid.Column="1" Content="Создать" Click="AddPlaylistClick" />
+            <Button Grid.Column="2" Content="Сохранить настройки" Click="SavePlaylistSettingsClick" />
+            <Button Grid.Column="3" Content="Активировать" Click="ActivatePlaylistClick" />
+            <Button Grid.Column="4" Content="Удалить" Click="RemovePlaylistClick" />
+          </Grid>
+        </Grid>
+
+        <Grid Name="SchedulePage" IsVisible="False" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="10">
+          <TextBlock Text="Правила автоматически переключают профили по времени и дням недели." Foreground="#A7A9B3" />
+          <ListBox Name="RulesList" Grid.Row="1" SelectionChanged="RuleSelectionChanged"
+                   Background="#202127" BorderBrush="#373840" BorderThickness="1">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="core:ScheduleRule">
+                <StackPanel Margin="8" Spacing="3">
+                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Summary}" FontSize="12" Foreground="#A7A9B3" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <Grid Grid.Row="2" ColumnDefinitions="*,*,*,*" ColumnSpacing="8">
+            <TextBox Name="RuleNameBox" PlaceholderText="Название правила" />
+            <TextBox Name="RuleStartBox" Grid.Column="1" Text="09:00" PlaceholderText="Начало" />
+            <TextBox Name="RuleEndBox" Grid.Column="2" Text="18:00" PlaceholderText="Конец" />
+            <ComboBox Name="RuleProfileBox" Grid.Column="3" PlaceholderText="Профиль">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="core:Profile">
+                  <TextBlock Text="{Binding Name}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </Grid>
+          <WrapPanel Grid.Row="3" Orientation="Horizontal">
+            <TextBlock Text="Дни:" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <CheckBox Name="RuleMondayBox" Content="Пн" Tag="0" />
+            <CheckBox Name="RuleTuesdayBox" Content="Вт" Tag="1" />
+            <CheckBox Name="RuleWednesdayBox" Content="Ср" Tag="2" />
+            <CheckBox Name="RuleThursdayBox" Content="Чт" Tag="3" />
+            <CheckBox Name="RuleFridayBox" Content="Пт" Tag="4" />
+            <CheckBox Name="RuleSaturdayBox" Content="Сб" Tag="5" />
+            <CheckBox Name="RuleSundayBox" Content="Вс" Tag="6" />
+            <TextBlock Text="Приоритет:" VerticalAlignment="Center" Margin="8,0,4,0" />
+            <TextBox Name="RulePriorityBox" Width="60" Text="0" />
+            <CheckBox Name="RuleEnabledBox" Content="Включено" IsChecked="True" VerticalAlignment="Center" Margin="8,0" />
+            <Button Content="Создать" Click="AddRuleClick" />
+            <Button Content="Сохранить выбранное" Click="SaveRuleClick" />
+            <Button Content="Вкл/выкл" Click="ToggleRuleClick" />
+            <Button Content="Удалить" Click="RemoveRuleClick" />
+          </WrapPanel>
+        </Grid>
+
+        <ScrollViewer Name="SettingsPage" IsVisible="False">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Автоматическая пауза" FontSize="18" FontWeight="SemiBold" />
+            <CheckBox Name="PauseFullscreenBox" Content="Ставить на паузу при полноэкранном приложении" Click="SettingChanged" />
+            <CheckBox Name="PauseLockBox" Content="Ставить на паузу при блокировке экрана" Click="SettingChanged" />
+            <CheckBox Name="PauseBatteryBox" Content="Ставить на паузу при работе от батареи" Click="SettingChanged" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="20,0,0,0">
+              <TextBlock Text="Порог заряда (0 — любой уровень):" VerticalAlignment="Center" />
+              <TextBox Name="BatteryThresholdBox" Width="80" LostFocus="SettingNumberLostFocus" />
+              <TextBlock Text="%" VerticalAlignment="Center" />
+            </StackPanel>
+            <CheckBox Name="PauseRemoteBox" Content="Ставить на паузу в удалённом сеансе" Click="SettingChanged" />
+            <CheckBox Name="PauseIdleBox" Content="Ставить на паузу при простое" Click="SettingChanged" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="20,0,0,0">
+              <TextBlock Text="Простой до паузы:" VerticalAlignment="Center" />
+              <TextBox Name="IdleMinutesBox" Width="80" LostFocus="SettingNumberLostFocus" />
+              <TextBlock Text="минут" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="Запуск и окно" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <CheckBox Name="StartWithSystemBox" Content="Запускать Wallflow вместе с системой" Click="SettingChanged" />
+            <CheckBox Name="MinimizeToTrayBox" Content="Сворачивать окно в системный трей" Click="SettingChanged" />
+            <CheckBox Name="CloseToTrayBox" Content="При закрытии окна оставаться в системном трее" Click="SettingChanged" />
+            <TextBlock Text="Статичные обои" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <ComboBox Name="StaticWallpaperModeBox" SelectionChanged="StaticWallpaperModeSelectionChanged">
+              <ComboBoxItem Content="Автоматически (рекомендуется)" Tag="auto" />
+              <ComboBoxItem Content="Через систему — чётче" Tag="native" />
+              <ComboBoxItem Content="Своим окном — расширенные режимы" Tag="window" />
+            </ComboBox>
+            <TextBlock Text="Системный режим задаёт фон средствами ОС. Режим окна нужен для собственного размещения и per-monitor отображения; поддержка зависит от рабочего стола." TextWrapping="Wrap" Foreground="#A7A9B3" />
+            <TextBlock Text="Масштабирование системных фото (GNOME / Cinnamon)" FontSize="14" FontWeight="SemiBold" />
+            <ComboBox Name="LinuxWallpaperFitBox" SelectionChanged="LinuxWallpaperFitSelectionChanged">
+              <ComboBoxItem Content="Заполнить (обрезать)" Tag="fill" />
+              <ComboBoxItem Content="Вписать целиком" Tag="fit" />
+              <ComboBoxItem Content="Растянуть" Tag="stretch" />
+              <ComboBoxItem Content="По центру" Tag="center" />
+              <ComboBoxItem Content="Плиткой" Tag="tile" />
+            </ComboBox>
+            <TextBlock Text="Применяется к статичным фото через системные настройки фона; GNOME и Cinnamon не поддерживают разные обои на мониторах этим способом." TextWrapping="Wrap" Foreground="#A7A9B3" />
+            <TextBlock Text="Воспроизведение" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Максимум кадров в секунду для сцен:" VerticalAlignment="Center" />
+              <TextBox Name="MaxFpsBox" Width="80" LostFocus="SettingNumberLostFocus" />
+              <TextBlock Text="fps" VerticalAlignment="Center" />
+            </StackPanel>
+            <CheckBox Name="LoopVideosBox" Content="Повторять видео бесконечно" Click="SettingChanged" />
+            <CheckBox Name="VideoAudioBox" Content="Включить звук в видео-обоях" Click="SettingChanged" />
+            <CheckBox Name="InteractiveWebBox" Content="HTML-обои реагируют на клики мышью" Click="SettingChanged" />
+          </StackPanel>
+        </ScrollViewer>
+
+        <Grid Name="SourcesPage" IsVisible="False" RowDefinitions="Auto,*,Auto" RowSpacing="10">
+          <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+            <ComboBox Name="SourceProviderBox" Width="190" PlaceholderText="Источник" />
+            <TextBox Name="SourceQueryBox" Grid.Column="1" PlaceholderText="Например: горы, космос, абстракция" />
+            <Button Grid.Column="2" Content="Найти" Click="SearchSourcesClick" />
+            <Button Grid.Column="3" Content="Фото дня" Click="DailySourcesClick" />
+          </Grid>
+          <ListBox Name="SourceResultsList" Grid.Row="1" Background="#202127" BorderBrush="#373840" BorderThickness="1">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="sources:SearchResult">
+                <StackPanel Margin="8" Spacing="3">
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Provider}" FontSize="12" Foreground="#A7A9B3" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+            <TextBox Name="SourceKeyBox" PlaceholderText="API-ключ (если нужен)" />
+            <Button Grid.Column="1" Content="Сохранить ключ" Click="SaveSourceKeyClick" />
+            <Button Grid.Column="2" Content="Скачать выбранное" Click="DownloadSourceClick" />
+          </Grid>
+        </Grid>
+      </Grid>
+
+      <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+        <TextBlock Name="StatusText" Text="Готово" VerticalAlignment="Center" Foreground="#C1C2CA" />
+        <Button Name="PauseButton" Grid.Column="1" Content="Пауза" Click="PauseClick" />
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+          <Button Content="◀" Click="PreviousClick" />
+          <Button Content="▶" Click="NextClick" />
+        </StackPanel>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>
