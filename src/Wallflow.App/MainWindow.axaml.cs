@@ -272,6 +272,34 @@ public partial class MainWindow : Window
                 NextFromHotkey();
                 e.Handled = true;
                 break;
+            case Key.Q:
+                QuitApplication();
+                e.Handled = true;
+                break;
+            case Key.D1:
+                ShowPage("library");
+                e.Handled = true;
+                break;
+            case Key.D2:
+                ShowPage("sources");
+                e.Handled = true;
+                break;
+            case Key.D3:
+                ShowPage("playlists");
+                e.Handled = true;
+                break;
+            case Key.D4:
+                ShowPage("profiles");
+                e.Handled = true;
+                break;
+            case Key.D5:
+                ShowPage("schedule");
+                e.Handled = true;
+                break;
+            case Key.D6:
+                ShowPage("settings");
+                e.Handled = true;
+                break;
         }
     }
 
@@ -339,6 +367,11 @@ public partial class MainWindow : Window
     private void NavigateClick(object? sender, RoutedEventArgs e)
     {
         var page = (sender as Button)?.Tag as string ?? "library";
+        ShowPage(page);
+    }
+
+    private void ShowPage(string page)
+    {
         LibraryPage.IsVisible = page == "library";
         SourcesPage.IsVisible = page == "sources";
         PlaylistsPage.IsVisible = page == "playlists";

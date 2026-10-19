@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Security;
+using Microsoft.Win32;
 
 namespace Wallflow.App.Core;
 
@@ -8,6 +11,29 @@ public interface IWallpaperBackend
 {
     string Name { get; }
     bool SetWallpaper(string path, string fit = "fill");
+    bool SetAccentColor(string hexColor);
+}
+
+/// <summary>
+/// Shared helpers for the platform backends.
+/// </summary>
+internal static class WallpaperBackendHelpers
+{
+    /// <summary>
+    /// Normalises ``#rgb`` / ``#rrggbb`` / ``#rrggbbaa`` into ``#rrggbb``.
+    /// Unknown input becomes ``#000000``.
+    /// </summary>
+    public static string NormalizeHex(string? color)
+    {
+        var value = color?.Trim().TrimStart('#') ?? string.Empty;
+        if (value.Length == 3)
+            value = string.Concat(value.Select(character => character.ToString() + character));
+        if (value.Length == 8)
+            value = value[..6];
+        if (value.Length != 6 || !value.All(char.IsAsciiHexDigit))
+            return "#000000";
+        return "#" + value.ToLowerInvariant();
+    }
 }
 
 public static class WallpaperBackendFactory
@@ -37,7 +63,64 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
     {
         if (!File.Exists(path))
             throw new FileNotFoundException("Wallpaper image does not exist.", path);
+        ApplyStyle(fit);
         return SystemParametersInfo(SpiSetDesktopWallpaper, 0, Path.GetFullPath(path), UpdateIniFile | SendChange);
+    }
+
+    private void ApplyStyle(string fit)
+    {
+#pragma warning disable CA1416 // Registry is only available on Windows
+        var style = fit.ToLowerInvariant() switch
+        {
+            "fit" => "Center",
+            "stretch" => "Stretch",
+            "center" => "Center",
+            "tile" => "Tile",
+            _ => "Fill"
+        };
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Control Panel\Desktop", writable: true);
+            if (key is null)
+                return;
+            key.SetValue("WallpaperStyle", style, Microsoft.Win32.RegistryValueKind.String);
+            key.SetValue("TileWallpaper", style == "Tile" ? "1" : "0",
+                Microsoft.Win32.RegistryValueKind.String);
+        }
+        catch (Exception exception) when (
+            exception is IOException or SecurityException or InvalidOperationException)
+        {
+        }
+#pragma warning restore CA1416
+    }
+
+    public bool SetAccentColor(string hexColor)
+    {
+#pragma warning disable CA1416 // Registry is only available on Windows
+        var normalized = WallpaperBackendHelpers.NormalizeHex(hexColor);
+        if (normalized.Length != 7 ||
+            !byte.TryParse(normalized[1..3], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var red) ||
+            !byte.TryParse(normalized[3..5], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var green) ||
+            !byte.TryParse(normalized[5..7], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var blue))
+            return false;
+
+        // The same value the Windows shell uses for its own colourisation.
+        var value = (0x99 << 24) | (blue << 16) | (green << 8) | red;
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\DWM", writable: true);
+            if (key is null)
+                return false;
+            key.SetValue("ColorizationColor", value, Microsoft.Win32.RegistryValueKind.DWord);
+        }
+        catch (Exception exception) when (
+            exception is IOException or SecurityException or InvalidOperationException)
+        {
+        }
+#pragma warning restore CA1416
+        return true;
     }
 
     [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -58,6 +141,8 @@ internal sealed class MacOsWallpaperBackend : IWallpaperBackend
         return Run("/usr/bin/osascript", "-e",
             $"tell application \"System Events\" to set picture of every desktop to POSIX file \"{escapedPath}\"");
     }
+
+    public bool SetAccentColor(string hexColor) => false;
 
     private static bool Run(string executable, params string[] arguments)
     {
@@ -147,6 +232,31 @@ internal sealed class LinuxWallpaperBackend : IWallpaperBackend
             return true;
 
         return !_isWayland && _runCommand("feh", ["--bg-fill", fullPath]);
+    }
+
+    public bool SetAccentColor(string hexColor)
+    {
+        var color = WallpaperBackendHelpers.NormalizeHex(hexColor);
+        if (_desktop.Contains("sway"))
+        {
+            return _runCommand("swaymsg", ["output", "*", "bg", color, "solid_color"]);
+        }
+
+        if (_desktop.Contains("kde"))
+        {
+            // Match the desktop colour used by KDE's own colourisation.
+            var script =
+                "var allDesktops = desktops();\n" +
+                "for (var i = 0; i < allDesktops.length; i++) {\n" +
+                $"    allDesktops[i].color = \"{color}\";\n" +
+                "}";
+            return _runCommand("qdbus6", ["org.kde.plasmashell", "/PlasmaShell",
+                           "org.kde.PlasmaShell.evaluateScript", script]) ||
+                   _runCommand("qdbus", ["org.kde.plasmashell", "/PlasmaShell",
+                       "org.kde.PlasmaShell.evaluateScript", script]);
+        }
+
+        return false;
     }
 
     private static bool SetXfceWallpaper(string path)

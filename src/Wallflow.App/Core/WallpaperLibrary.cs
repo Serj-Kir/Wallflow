@@ -50,6 +50,11 @@ public sealed class WallpaperLibrary
             ? wallpaper
             : null;
 
+    public Wallpaper? ByPath(string path) =>
+        _items.TryGetValue(Wallpaper.IdForPath(path), out var wallpaper)
+            ? wallpaper
+            : null;
+
     public bool Remove(string id, bool deleteFile = false)
     {
         if (!_items.Remove(id, out var item))
@@ -201,6 +206,19 @@ public sealed class WallpaperLibrary
                 item.Tags.Any(tag => tag.Contains(needle, StringComparison.OrdinalIgnoreCase)))
             .OrderByDescending(item => item.Favourite)
             .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// All tags currently used by the wallpapers in the library.
+    /// </summary>
+    public IReadOnlyList<string> Tags()
+    {
+        return _items.Values
+            .Where(item => File.Exists(item.Path) || Directory.Exists(item.Path))
+            .SelectMany(item => item.Tags)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(tag => tag, StringComparer.Ordinal)
             .ToArray();
     }
 

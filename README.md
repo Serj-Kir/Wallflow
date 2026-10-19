@@ -51,7 +51,18 @@ search, favourites, folder scanning and import; profile, playlist, and schedule 
 online wallpaper providers; settings and system autostart; pause policies; static wallpaper
 application on Windows, macOS, and selected Linux desktops; and animated scene previews. It
 also has live image, scene, video, and HTML renderers, per-monitor wallpaper surfaces, a system
-tray, and global hotkeys on Windows and X11. The C# configuration and library files use the
+tray, and global hotkeys on Windows and X11.
+
+The desktop backends support the accent colour used by the running session: Windows writes the
+DWM colourisation value, Sway applies it through `swaymsg`, and KDE Plasma through
+`evaluateScript`; GNOME does not support it. The Windows backend also honours the configured fit
+mode when it applies a static image, persisting `WallpaperStyle` / `TileWallpaper` in the
+registry.
+
+In-window shortcuts mirror the Python application: `Ctrl+Space` toggles playback, `Ctrl+←` /
+`Ctrl+→` step through the playlist, `Ctrl+1` … `Ctrl+6` switch between the pages, and `Ctrl+Q`
+quits. The page-switching and quit shortcuts are handled locally; the global ones are registered
+by `GlobalHotkeyManager`. The C# configuration and library files use the
 same JSON names as the Python version. Its settings page includes automatic-pause thresholds,
 startup/tray behavior, video looping and audio, and HTML mouse interaction. Per-monitor image
 assignments support fill, fit, stretch, center, and tile modes with alignment controls.
@@ -86,6 +97,10 @@ which may need to be installed separately. Linux desktop-layer behavior varies b
 Wayland support is especially limited and is not guaranteed. Keep the Python implementation for
 workflows that require verified platform behavior until the C# port has been tested on the
 target desktop.
+
+The video-upscaling notice that the Python version shows when a video is smaller than its
+monitor is not implemented yet. Everything else listed above is implemented, but the
+interactive behaviour still needs the GUI smoke tests that the Python side received.
 
 ---
 

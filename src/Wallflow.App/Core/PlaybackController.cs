@@ -113,7 +113,7 @@ public sealed class DesktopWallpaperPlayback : IWallpaperPlayback, IDisposable
             surface.UpdateSettings(loopVideos, videoAudio, interactiveWeb, maxFps);
     }
 
-    public bool ApplyAccent(string color) => false;
+    public bool ApplyAccent(string color) => _backend.SetAccentColor(color);
 
     public void Dispose()
     {

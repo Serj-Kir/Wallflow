@@ -14,12 +14,20 @@ public sealed class WallflowConfig
     };
 
     private readonly JsonObject _data;
+    private readonly List<Action<string, object?>> _listeners = [];
 
     public WallflowConfig()
     {
         WallflowPaths.EnsureDirectories();
         _data = Load();
     }
+
+    /// <summary>
+    /// Registers a callback invoked after a setting is written, with the setting key
+    /// and its new value. A failing callback never breaks saving.
+    /// </summary>
+    public void AddListener(Action<string, object?> listener) =>
+        _listeners.Add(listener ?? throw new ArgumentNullException(nameof(listener)));
 
     public IReadOnlyList<string> LibraryDirectories =>
         _data["library_dirs"] is JsonArray dirs
@@ -45,7 +53,23 @@ public sealed class WallflowConfig
     public void Set<T>(string key, T value)
     {
         _data[key] = JsonSerializer.SerializeToNode(value, JsonOptions);
+        NotifyListeners(key, value);
         Save();
+    }
+
+    private void NotifyListeners(string key, object? value)
+    {
+        foreach (var listener in _listeners.ToArray())
+        {
+            try
+            {
+                listener(key, value);
+            }
+            catch
+            {
+                // A bad listener must never break saving.
+            }
+        }
     }
 
     public void ResetDefaults()
@@ -212,7 +236,7 @@ public sealed class WallflowConfig
         var directory = Path.Combine(Path.GetDirectoryName(configPath)!, "backups");
         Directory.CreateDirectory(directory);
         var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", System.Globalization.CultureInfo.InvariantCulture);
-        File.Copy(configPath, Path.Combine(directory, $"config-{stamp}.json"));
+        File.Copy(configPath, Path.Combine(directory, $"config-{stamp}.json"), overwrite: true);
         var oldBackups = Directory.EnumerateFiles(directory, "config-*.json")
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .Skip(MaximumBackups);

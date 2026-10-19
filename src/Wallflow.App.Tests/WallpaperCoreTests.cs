@@ -560,6 +560,77 @@ public sealed class WallpaperCoreTests
         Assert.IsFalse(player.Paused);
     }
 
+    [TestMethod]
+    public void ConfigSetNotifiesListenersAndToleratesBrokenListeners()
+    {
+        var config = new WallflowConfig();
+        var notified = new List<(string Key, object? Value)>();
+        config.AddListener((key, value) =>
+        {
+            throw new InvalidOperationException("broken listener");
+        });
+        config.AddListener((key, value) => notified.Add((key, value)));
+
+        config.Set("video_audio", true);
+        config.Set("boom", 1);
+        config.Set("loop_videos", false);
+
+        Assert.AreEqual(3, notified.Count);
+        Assert.AreEqual("video_audio", notified[0].Key);
+        Assert.AreEqual("boom", notified[1].Key);
+        Assert.AreEqual("loop_videos", notified[2].Key);
+        Assert.IsTrue(config.Get("video_audio", false));
+        Assert.IsFalse(config.Get("loop_videos", true));
+    }
+
+    [TestMethod]
+    public void LibraryLookupByPathFindsTheWallpaper()
+    {
+        Directory.CreateDirectory(WallflowPaths.WallpaperDirectory);
+        var path = Path.Combine(_testDirectory, "wallpaper.jpg");
+        File.WriteAllBytes(path, [0x01]);
+
+        var library = new WallpaperLibrary(new WallflowConfig());
+        Assert.IsNull(library.ByPath(Path.Combine(_testDirectory, "missing.jpg")));
+
+        var imported = Path.Combine(_testDirectory, "imported.jpg");
+        File.Copy(path, imported);
+        library.AddFiles([imported]);
+
+        var copiedPath = Path.Combine(WallflowPaths.WallpaperDirectory, "imported.jpg");
+        Assert.IsNotNull(library.ByPath(copiedPath));
+        Assert.IsNull(library.ByPath(Path.Combine(_testDirectory, "missing.jpg")));
+    }
+
+    [TestMethod]
+    public void LinuxBackendAppliesAccentColourForSway()
+    {
+        var calls = new List<(string Executable, string[] Arguments)>();
+        var backend = new LinuxWallpaperBackend(
+            (executable, arguments) =>
+            {
+                calls.Add((executable, arguments.ToArray()));
+                return true;
+            },
+            desktop: "Sway",
+            isWayland: true);
+
+        Assert.IsTrue(backend.SetAccentColor("#ff8800"));
+        Assert.HasCount(1, calls);
+        Assert.IsTrue(calls[0].Executable == "swaymsg");
+        Assert.IsTrue(calls[0].Arguments.SequenceEqual([
+            "output", "*", "bg", "#ff8800", "solid_color"]));
+    }
+
+    [TestMethod]
+    public void BackendHelpersNormaliseHexColours()
+    {
+        Assert.AreEqual("#0b1020", WallpaperBackendHelpers.NormalizeHex("#0b1020"));
+        Assert.AreEqual("#abcdef", WallpaperBackendHelpers.NormalizeHex("ABCDEF"));
+        Assert.AreEqual("#112233", WallpaperBackendHelpers.NormalizeHex("#11223344"));
+        Assert.AreEqual("#000000", WallpaperBackendHelpers.NormalizeHex("not-a-colour"));
+    }
+
     private sealed class FakePlayback : IWallpaperPlayback
     {
         public IReadOnlyList<MonitorInfo> Monitors => [];
