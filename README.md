@@ -75,6 +75,22 @@ dotnet publish src/Wallflow.App -c Release -r linux-x64 --self-contained false
 dotnet publish src/Wallflow.App -c Release -r osx-arm64 --self-contained false
 ```
 
+### Готовый `.exe` для Windows
+
+```powershell
+dotnet publish src\Wallflow.App -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=false -p:DebugType=none -o publish\win-x64
+
+# Необязательно: выкинуть чужие архитектуры VLC и отладочные символы (≈290 МБ)
+Remove-Item -Recurse publish\win-x64\libvlc\win-arm64, publish\win-x64\libvlc\win-x86
+Get-ChildItem publish\win-x64 -Recurse -Filter *.pdb | Remove-Item
+```
+
+На выходе — `publish\win-x64\Wallflow.exe` (self-contained, .NET ставить не
+нужно, размер ≈210 МБ из-за встроенных LibVLC и .NET). Запускать из папки
+целиком: рядом должны лежать `libvlc\win-x64` и остальные файлы. Для HTML-обоев
+нужен WebView2 Runtime (в Windows 11 уже есть).
+
 ---
 
 ## Командная строка

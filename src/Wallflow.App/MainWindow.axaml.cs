@@ -183,6 +183,7 @@ public partial class MainWindow : Window
         Console.WriteLine($"  per-monitor wallpapers: {(_playback.Capabilities.PerMonitor ? "yes" : "no")}");
         Console.WriteLine($"  accent colour: {(_playback.Capabilities.AccentColor ? "yes" : "no")}");
         Console.WriteLine($"  backend: {_playback.BackendName}");
+        Console.WriteLine($"  video runtime: {(VideoRuntime.IsAvailable ? "available (LibVLC)" : "unavailable")}");
         Console.WriteLine("Monitors:");
         var screens = Screens.All;
         for (var index = 0; index < screens.Count; index++)

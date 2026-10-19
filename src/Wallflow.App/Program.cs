@@ -14,6 +14,8 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        ConsoleSupport.AttachToParentConsole();
+
         if (!WallflowCommandLine.TryParse(args, out var options, out var error))
         {
             Console.Error.WriteLine(error);
