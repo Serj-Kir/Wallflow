@@ -22,6 +22,8 @@ class Program
             return;
         }
 
+        Log.Configure(LogLevel.Info, options.Verbose);
+
         if (options.ShowHelp)
         {
             Console.WriteLine(WallflowCommandLine.Usage);
@@ -65,7 +67,10 @@ class Program
 
         App.StartMinimized = options.Minimized || options.Hidden;
         App.StartupCommand = options;
+        Log.Info($"Wallflow 1.0.0 starting (data: {WallflowPaths.DataDirectory}, " +
+                 $"desktop: {DesktopEnvironment.Detect().Desktop}, session: {DesktopEnvironment.SessionType()})");
         Environment.ExitCode = BuildAvaloniaApp().StartWithClassicDesktopLifetime([]);
+        Log.Info("Wallflow stopped");
         InstanceGuard = null;
     }
 

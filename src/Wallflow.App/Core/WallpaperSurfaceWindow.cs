@@ -10,6 +10,8 @@ namespace Wallflow.App.Core;
 internal sealed class WallpaperSurfaceWindow : Window
 {
     private readonly LiveWallpaperControl _wallpaper;
+    private readonly string _name;
+    private readonly Action<string> _report;
     private readonly int _transitionMs;
     private readonly Stopwatch _transitionClock = new();
     private readonly DispatcherTimer _transitionTimer;
@@ -34,8 +36,11 @@ internal sealed class WallpaperSurfaceWindow : Window
         var scale = screen.Scaling <= 0 ? 1 : screen.Scaling;
         _clickable = interactiveWebWallpaper && wallpaper.WallpaperType == WallpaperKind.Web;
         _monitorBounds = screen.Bounds;
+        _name = wallpaper.Name;
+        _report = reportError;
         _wallpaper = new LiveWallpaperControl(wallpaper, loopVideos, videoAudio, maxFps);
-        _wallpaper.PlaybackError += (_, message) => reportError($"{monitor.Name}: {message}");
+        _wallpaper.PlaybackError += (_, message) => _report($"{monitor.Name}: {message}");
+        _wallpaper.SourceResolutionResolved += (_, size) => WarnIfUpscaled(size);
 
         Title = $"Wallflow wallpaper — {monitor.Name}";
         WindowDecorations = Avalonia.Controls.WindowDecorations.None;
@@ -72,6 +77,27 @@ internal sealed class WallpaperSurfaceWindow : Window
 
     public void PauseWallpaper() => _wallpaper.Pause();
     public void ResumeWallpaper() => _wallpaper.Resume();
+
+    /// <summary>
+    /// Warns once when a video is smaller than the monitor it is stretched across,
+    /// the way the desktop-tools version of Wallflow always did.
+    /// </summary>
+    internal static string UpscaleWarning(string name, MediaSize size, int monitorWidth, int monitorHeight)
+    {
+        var factor = monitorWidth / (double)size.Width;
+        var text = System.Globalization.CultureInfo.InvariantCulture;
+        return $"«{name}»: видео {size.Width}×{size.Height}, а монитор {monitorWidth}×{monitorHeight} — " +
+               string.Create(text, $"картинка растягивается в {factor:0.0} раз, поэтому будет размытой. ") +
+               "Возьмите ролик в 1080p или 4K.";
+    }
+
+    private void WarnIfUpscaled(MediaSize size)
+    {
+        var monitorWidth = _monitorBounds.Width;
+        if (monitorWidth <= 0 || size.Width >= monitorWidth)
+            return;
+        _report(UpscaleWarning(_name, size, monitorWidth, _monitorBounds.Height));
+    }
 
     public bool AttachToDesktop(PixelRect monitorBounds, PixelRect virtualBounds) =>
         SetDesktopPlacement(monitorBounds, virtualBounds);

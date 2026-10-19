@@ -1,6 +1,8 @@
+using System.ComponentModel;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
+using Avalonia.Media.Imaging;
 
 namespace Wallflow.App.Core;
 
@@ -12,8 +14,10 @@ public enum WallpaperKind
     Scene
 }
 
-public sealed class Wallpaper
+public sealed class Wallpaper : INotifyPropertyChanged
 {
+    private Bitmap? _thumbnail;
+
     public required string Id { get; init; }
     public required string Path { get; init; }
     public string Kind { get; set; } = "image";
@@ -29,12 +33,37 @@ public sealed class Wallpaper
     [JsonIgnore]
     public string DisplayAlignment { get; set; } = "center";
 
+    /// <summary>Populated lazily by <see cref="ThumbnailCache"/> for the library list.</summary>
+    [JsonIgnore]
+    public Bitmap? Thumbnail
+    {
+        get => _thumbnail;
+        set
+        {
+            if (ReferenceEquals(_thumbnail, value))
+                return;
+            _thumbnail = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public WallpaperKind WallpaperType => Kind switch
     {
         "video" => WallpaperKind.Video,
         "web" => WallpaperKind.Web,
         "scene" => WallpaperKind.Scene,
         _ => WallpaperKind.Image
+    };
+
+    [JsonIgnore]
+    public string KindLabel => WallpaperType switch
+    {
+        WallpaperKind.Video => "Видео",
+        WallpaperKind.Web => "HTML",
+        WallpaperKind.Scene => "Сцена",
+        _ => "Фото"
     };
 
     public static Wallpaper FromPath(string path)

@@ -6,6 +6,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
@@ -25,6 +26,8 @@ public partial class MainWindow : Window
     private readonly WallflowTrayService? _tray;
     private readonly ObservableCollection<Wallpaper> _visibleWallpapers = [];
     private readonly ObservableCollection<SearchResult> _sourceResults = [];
+    private readonly ObservableCollection<string> _libraryDirectories = [];
+    private ThumbnailCache _thumbnails;
     private CancellationTokenSource? _sourceSearchCancellation;
     private IReadOnlyList<Provider> _providers = [];
     private bool _allowExit;
@@ -36,6 +39,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _config = new WallflowConfig();
         _library = new WallpaperLibrary(_config);
+        _thumbnails = new ThumbnailCache(_config.Get("thumb_size", 220));
         _playback = new DesktopWallpaperPlayback(config: _config);
         _controller = new PlaybackController(_config, _library, _playback);
         WallpaperList.ItemsSource = _visibleWallpapers;
@@ -46,6 +50,7 @@ public partial class MainWindow : Window
         ProfilePlaylistBox.ItemsSource = _controller.Playlists;
         StartupProfileBox.ItemsSource = _controller.Profiles;
         SourceResultsList.ItemsSource = _sourceResults;
+        LibraryDirectoriesList.ItemsSource = _libraryDirectories;
         WallpaperKindFilterBox.SelectedIndex = 0;
         LoadSourceProviders();
         SourceProviderBox.SelectionChanged += (_, _) => UpdateSourceKey();
@@ -172,7 +177,12 @@ public partial class MainWindow : Window
 
     private void PrintMonitors()
     {
-        Console.WriteLine($"System: {Environment.OSVersion.Platform}");
+        var session = DesktopEnvironment.Detect();
+        var suffix = session.IsWayland ? ", Wayland" : "";
+        Console.WriteLine($"System: {session.Label}  ({session.Desktop}); session: {session.SessionType}{suffix}");
+        Console.WriteLine($"  per-monitor wallpapers: {(_playback.Capabilities.PerMonitor ? "yes" : "no")}");
+        Console.WriteLine($"  accent colour: {(_playback.Capabilities.AccentColor ? "yes" : "no")}");
+        Console.WriteLine($"  backend: {_playback.BackendName}");
         Console.WriteLine("Monitors:");
         var screens = Screens.All;
         for (var index = 0; index < screens.Count; index++)
@@ -698,6 +708,10 @@ public partial class MainWindow : Window
         FavoriteButton.IsEnabled = selected is not null;
         PreviewSceneButton.IsEnabled = selected is not null;
         ApplyButton.IsEnabled = selected is not null;
+        PropertiesButton.IsEnabled = selected is not null;
+        OpenFolderButton.IsEnabled = selected is not null;
+        CopyPathButton.IsEnabled = selected is not null;
+        DeleteButton.IsEnabled = selected is not null;
         FavoriteButton.Content = selected?.Favourite == true ? "Убрать из избранного" : "В избранное";
         WallpaperNameBox.Text = selected?.Name ?? "";
         WallpaperAuthorBox.Text = selected?.Author ?? "";
@@ -772,6 +786,240 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void PropertiesClick(object? sender, RoutedEventArgs e)
+    {
+        if (WallpaperList.SelectedItem is not Wallpaper selected)
+            return;
+        try
+        {
+            await WallpaperDialogs.ShowPropertiesAsync(this, selected, _controller.Monitors);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            StatusText.Text = $"Не удалось показать свойства: {ex.Message}";
+        }
+    }
+
+    private void OpenWallpaperFolderClick(object? sender, RoutedEventArgs e)
+    {
+        if (WallpaperList.SelectedItem is not Wallpaper selected)
+            return;
+        OpenInFileManager(selected.Path, select: File.Exists(selected.Path));
+    }
+
+    private async void CopyPathClick(object? sender, RoutedEventArgs e)
+    {
+        if (WallpaperList.SelectedItem is not Wallpaper selected)
+            return;
+        if (Clipboard is { } clipboard)
+        {
+            await clipboard.SetTextAsync(selected.Path);
+            StatusText.Text = "Путь скопирован в буфер обмена.";
+        }
+    }
+
+    private async void DeleteWallpaperClick(object? sender, RoutedEventArgs e)
+    {
+        if (WallpaperList.SelectedItem is not Wallpaper selected)
+            return;
+        var choice = WallpaperDeleteChoice.Cancel;
+        try
+        {
+            choice = await WallpaperDialogs.ConfirmDeleteAsync(this, selected);
+        }
+        catch (InvalidOperationException ex)
+        {
+            StatusText.Text = $"Не удалось открыть подтверждение: {ex.Message}";
+            return;
+        }
+
+        if (choice == WallpaperDeleteChoice.Cancel)
+            return;
+        try
+        {
+            if (!_library.Remove(selected.Id, deleteFile: choice == WallpaperDeleteChoice.DeleteFile))
+                return;
+            RefreshWallpapers(choice == WallpaperDeleteChoice.DeleteFile
+                ? $"Обои «{selected.Name}» удалены с диска."
+                : $"Обои «{selected.Name}» убраны из библиотеки.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            StatusText.Text = $"Не удалось удалить обои: {ex.Message}";
+        }
+    }
+
+    /// <summary>Opens the file manager at a wallpaper, selecting the file on Windows.</summary>
+    private void OpenInFileManager(string path, bool select)
+    {
+        try
+        {
+            var directory = Directory.Exists(path) ? path : Path.GetDirectoryName(path) ?? path;
+            Directory.CreateDirectory(directory);
+            var executable = OperatingSystem.IsWindows()
+                ? "explorer.exe"
+                : OperatingSystem.IsMacOS() ? "open" : "xdg-open";
+            var startInfo = new ProcessStartInfo(executable) { UseShellExecute = false };
+            if (OperatingSystem.IsWindows() && select)
+                startInfo.ArgumentList.Add($"/select,{path}");
+            else
+                startInfo.ArgumentList.Add(directory);
+            Process.Start(startInfo);
+        }
+        catch (Exception ex) when (ex is IOException or Win32Exception or InvalidOperationException)
+        {
+            StatusText.Text = $"Не удалось открыть папку: {ex.Message}";
+        }
+    }
+
+    private void OpenDataFolderClick(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            WallflowPaths.EnsureDirectories();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StatusText.Text = $"Не удалось создать папку данных: {ex.Message}";
+            return;
+        }
+        OpenInFileManager(WallflowPaths.DataDirectory, select: false);
+    }
+
+    private void OpenLogFolderClick(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(WallflowPaths.LogDirectory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StatusText.Text = $"Не удалось создать папку журналов: {ex.Message}";
+            return;
+        }
+        OpenInFileManager(WallflowPaths.LogDirectory, select: false);
+    }
+
+    private async void ResetSettingsClick(object? sender, RoutedEventArgs e)
+    {
+        var confirmed = await ConfirmAsync(
+            "Сбросить настройки",
+            "Настройки вернутся к значениям по умолчанию. Библиотека, профили и расписание сохранятся.");
+        if (!confirmed)
+            return;
+        try
+        {
+            _config.ResetDefaults();
+            LoadSettings();
+            StatusText.Text = "Настройки сброшены.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            StatusText.Text = $"Не удалось сбросить настройки: {ex.Message}";
+        }
+    }
+
+    private void RemoveLibraryDirectoryClick(object? sender, RoutedEventArgs e)
+    {
+        if (LibraryDirectoriesList.SelectedItem is not string directory)
+        {
+            StatusText.Text = "Выберите папку, которую нужно убрать.";
+            return;
+        }
+        try
+        {
+            _config.RemoveLibraryDirectory(directory);
+            RefreshLibraryDirectories();
+            RefreshWallpapers($"Папка убрана: {directory}");
+        }
+        catch (IOException ex)
+        {
+            StatusText.Text = $"Не удалось сохранить список папок: {ex.Message}";
+        }
+    }
+
+    private async void ChooseDownloadFolderClick(object? sender, RoutedEventArgs e)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Папка загрузок",
+            AllowMultiple = false
+        });
+        var path = folders.Select(folder => folder.TryGetLocalPath()).FirstOrDefault(item => item is not null);
+        if (path is null)
+            return;
+        try
+        {
+            _config.Set("download_folder", path);
+            UpdateDownloadFolder();
+            StatusText.Text = $"Загрузки будут сохраняться в {path}.";
+        }
+        catch (IOException ex)
+        {
+            StatusText.Text = $"Не удалось сохранить папку загрузок: {ex.Message}";
+        }
+    }
+
+    private void ResetDownloadFolderClick(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _config.Set("download_folder", "");
+            UpdateDownloadFolder();
+            StatusText.Text = "Загрузки вернутся в папку обоев.";
+        }
+        catch (IOException ex)
+        {
+            StatusText.Text = $"Не удалось сбросить папку загрузок: {ex.Message}";
+        }
+    }
+
+    private void AccentColorSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings)
+            return;
+        try
+        {
+            var accent = GetComboTag(AccentColorBox, "auto");
+            _config.Set("accent_color", accent);
+            if (accent.StartsWith('#') && _controller.ActiveProfile is { } profile && profile.AccentColor.Length == 0)
+                _playback.ApplyAccent(accent);
+            else if (accent is "auto" or "none")
+                _controller.ReapplyAccent();
+            StatusText.Text = "Акцентный цвет сохранён.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StatusText.Text = $"Не удалось сохранить акцент: {ex.Message}";
+        }
+        catch (NotSupportedException ex)
+        {
+            StatusText.Text = $"Акцентный цвет не поддерживается: {ex.Message}";
+        }
+    }
+
+    private void ThumbSizeSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingSettings)
+            return;
+        if (!int.TryParse(GetComboTag(ThumbSizeBox, "220"), out var size))
+            return;
+        try
+        {
+            _config.Set("thumb_size", size);
+            _thumbnails.Clear();
+            _thumbnails = new ThumbnailCache(size);
+            RefreshWallpapers("Размер миниатюр сохранён.");
+        }
+        catch (IOException ex)
+        {
+            StatusText.Text = $"Не удалось сохранить размер миниатюр: {ex.Message}";
+        }
+    }
+
+    private Task<bool> ConfirmAsync(string title, string message) =>
+        WallpaperDialogs.ConfirmAsync(this, title, message, "Сбросить");
+
     private void PreviewSceneClick(object? sender, RoutedEventArgs e)
     {
         if (WallpaperList.SelectedItem is not Wallpaper selected)
@@ -788,6 +1036,12 @@ public partial class MainWindow : Window
                 videoAudio: _config.Get("video_audio", false),
                 maxFps: _config.Get("max_fps", 30));
             control.PlaybackError += (_, message) => StatusText.Text = message;
+            control.SourceResolutionResolved += (_, size) =>
+            {
+                var widest = _controller.Monitors.OrderByDescending(monitor => monitor.Width).FirstOrDefault();
+                if (widest is not null && size.Width < widest.Width)
+                    StatusText.Text = WallpaperSurfaceWindow.UpscaleWarning(selected.Name, size, widest.Width, widest.Height);
+            };
             var preview = new Window
             {
                 Title = $"Предпросмотр — {selected.Name}",
@@ -1206,7 +1460,7 @@ public partial class MainWindow : Window
         if (SourceResultsList.SelectedItem is not SearchResult result)
             return;
 
-        var destination = Path.Combine(WallflowPaths.CacheDirectory, WallpaperSources.SuggestFilename(result));
+        var destination = Path.Combine(DownloadDirectory, WallpaperSources.SuggestFilename(result));
         try
         {
             StatusText.Text = $"Скачиваем «{result.Title}»…";
@@ -1223,6 +1477,19 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProviderError)
         {
             StatusText.Text = $"Ошибка скачивания: {ex.Message}";
+        }
+    }
+
+    private void StopClick(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _playback.ClearDesktop();
+            StatusText.Text = "Обои сняты с рабочего стола.";
+        }
+        catch (Exception ex) when (ex is IOException or NotSupportedException or InvalidOperationException)
+        {
+            StatusText.Text = $"Не удалось очистить рабочий стол: {ex.Message}";
         }
     }
 
@@ -1445,6 +1712,40 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RefreshLibraryDirectories()
+    {
+        _libraryDirectories.Clear();
+        _libraryDirectories.Add(WallflowPaths.WallpaperDirectory);
+        foreach (var directory in _config.LibraryDirectories)
+            _libraryDirectories.Add(directory);
+    }
+
+    private void UpdateDownloadFolder() =>
+        DownloadFolderBox.Text = _config.Get("download_folder", "");
+
+    private string DownloadDirectory
+    {
+        get
+        {
+            var configured = _config.Get("download_folder", "");
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                try
+                {
+                    Directory.CreateDirectory(configured);
+                    return configured;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    Log.Warn($"Could not use the configured download folder {configured}", exception);
+                }
+            }
+
+            Directory.CreateDirectory(WallflowPaths.CacheDirectory);
+            return WallflowPaths.CacheDirectory;
+        }
+    }
+
     private void LoadSettings()
     {
         _loadingSettings = true;
@@ -1475,6 +1776,13 @@ public partial class MainWindow : Window
         LoopVideosBox.IsChecked = _config.Get("loop_videos", true);
         VideoAudioBox.IsChecked = _config.Get("video_audio", false);
         InteractiveWebBox.IsChecked = _config.Get("interactive_web_wallpapers", true);
+        SelectComboTag(AccentColorBox, _config.Get("accent_color", "auto"));
+        SelectComboTag(ThumbSizeBox, _config.Get("thumb_size", 220).ToString());
+        RefreshLibraryDirectories();
+        UpdateDownloadFolder();
+        AboutText.Text =
+            $"Wallflow 1.0.0 · MIT License\nЖурнал: {Log.LogFile}\n" +
+            $"Данные: {WallflowPaths.DataDirectory}\nМиниатюры: {WallflowPaths.ThumbnailDirectory}";
         try
         {
             AutostartService.Sync(StartWithSystemBox.IsChecked == true);
@@ -1604,7 +1912,10 @@ public partial class MainWindow : Window
 
         _visibleWallpapers.Clear();
         foreach (var item in items)
+        {
             _visibleWallpapers.Add(item);
+            _thumbnails.Attach(item);
+        }
 
         if (selectedId is not null && WallpaperList is { } list)
             list.SelectedItem = _visibleWallpapers.FirstOrDefault(item => item.Id == selectedId);

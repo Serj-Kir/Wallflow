@@ -26,7 +26,7 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
     private const string WebResumeScript =
         "window.__wfResume.forEach(function(fn) { try { fn(); } catch (e) { console.error(e); } });";
 
-    private static readonly Lazy<LibVLC> SharedLibVlc = new(CreateLibVlc);
+    private static readonly Lazy<LibVLC> SharedLibVlc = new(() => VideoRuntime.Shared);
     private readonly Wallpaper _wallpaper;
     private bool _loopVideos;
     private bool _videoAudio;
@@ -59,7 +59,12 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
     }
 
     public event EventHandler<string>? PlaybackError;
+
+    /// <summary>Raised with the source resolution once a video has been probed.</summary>
+    public event EventHandler<MediaSize>? SourceResolutionResolved;
+
     public WallpaperKind WallpaperType => _wallpaper.WallpaperType;
+    public MediaSize? SourceSize { get; private set; }
 
     public async Task StartAsync()
     {
@@ -224,6 +229,21 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
         view.AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(StartVideo);
         _renderer = view;
         Content = view;
+        _ = ProbeResolutionAsync();
+    }
+
+    private async Task ProbeResolutionAsync()
+    {
+        var size = await MediaInfo.TryGetVideoSizeAsync(_wallpaper.Path).ConfigureAwait(false);
+        if (size is not { } resolved)
+            return;
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (_disposed)
+                return;
+            SourceSize = resolved;
+            SourceResolutionResolved?.Invoke(this, resolved);
+        });
     }
 
     private Task LoadWebAsync()
@@ -514,10 +534,4 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
     }
 
     private void SetError(string message) => PlaybackError?.Invoke(this, message);
-
-    private static LibVLC CreateLibVlc()
-    {
-        global::LibVLCSharp.Shared.Core.Initialize();
-        return new LibVLC("--no-video-title-show");
-    }
 }

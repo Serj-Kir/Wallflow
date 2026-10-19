@@ -631,6 +631,131 @@ public sealed class WallpaperCoreTests
         Assert.AreEqual("#000000", WallpaperBackendHelpers.NormalizeHex("not-a-colour"));
     }
 
+    [TestMethod]
+    public void AccentColorPicksTheDominantSaturatedHue()
+    {
+        var red = WritePng("accent-red.png", 160, 120, new SKColor(0xcc, 0x22, 0x22));
+        var blue = WritePng("accent-blue.png", 160, 120, new SKColor(0x22, 0x33, 0xcc));
+
+        var redAccent = AccentColor.Dominant(red);
+        var blueAccent = AccentColor.Dominant(blue);
+
+        Assert.AreNotEqual(AccentColor.Fallback, redAccent);
+        Assert.AreNotEqual(AccentColor.Fallback, blueAccent);
+        var redChannels = ParseHex(redAccent);
+        var blueChannels = ParseHex(blueAccent);
+        Assert.IsTrue(redChannels.Red > redChannels.Green && redChannels.Red > redChannels.Blue);
+        Assert.IsTrue(blueChannels.Blue > blueChannels.Green && blueChannels.Blue > blueChannels.Red);
+        Assert.AreEqual(AccentColor.Fallback, AccentColor.Dominant(Path.Combine(_testDirectory, "missing.png")));
+    }
+
+    [TestMethod]
+    public void ContrastingTextFollowsLuma()
+    {
+        Assert.AreEqual("#000000", AccentColor.ContrastingText("#ffffff"));
+        Assert.AreEqual("#ffffff", AccentColor.ContrastingText("#101010"));
+        Assert.AreEqual("#ffffff", AccentColor.ContrastingText("not-a-colour"));
+    }
+
+    [TestMethod]
+    public void MediaInfoReadsImageResolutionAndFormatsSizes()
+    {
+        var path = WritePng("resolution.png", 320, 200, new SKColor(0x40, 0x80, 0xc0));
+
+        var size = MediaInfo.TryGetImageSize(path);
+
+        Assert.AreEqual(new MediaSize(320, 200), size);
+        Assert.AreEqual("320x200", MediaInfo.Describe(size!.Value));
+        Assert.AreEqual("3840x2160 (4K)", MediaInfo.Describe(new MediaSize(3840, 2160)));
+        Assert.IsNull(MediaInfo.TryGetImageSize(Path.Combine(_testDirectory, "none.png")));
+    }
+
+    [TestMethod]
+    public void UpscaleWarningDescribesTheStretchFactor()
+    {
+        var warning = WallpaperSurfaceWindow.UpscaleWarning("Ролик", new MediaSize(1280, 720), 1920, 1080);
+
+        StringAssert.Contains(warning, "1280×720");
+        StringAssert.Contains(warning, "1920×1080");
+        StringAssert.Contains(warning, "1.5");
+        StringAssert.Contains(warning, "1080p");
+    }
+
+    [TestMethod]
+    public void HumanizeFormatsSizesAndDurations()
+    {
+        Assert.AreEqual("0 Б", Humanize.Bytes(0));
+        Assert.AreEqual("512 Б", Humanize.Bytes(512));
+        Assert.AreEqual("1.5 КБ", Humanize.Bytes(1536));
+        Assert.AreEqual("2 МБ", Humanize.Bytes(2 * 1024 * 1024));
+        Assert.AreEqual("45 с", Humanize.Duration(TimeSpan.FromSeconds(45)));
+        Assert.AreEqual("1 мин 30 с", Humanize.Duration(TimeSpan.FromSeconds(90)));
+        Assert.AreEqual("1 ч 1 мин", Humanize.Duration(TimeSpan.FromSeconds(3660)));
+    }
+
+    [TestMethod]
+    public void LibraryDirectoriesCanBeAddedAndRemoved()
+    {
+        var config = new WallflowConfig();
+        var folder = Path.Combine(_testDirectory, "extra-library");
+        Directory.CreateDirectory(folder);
+
+        config.AddLibraryDirectories([folder]);
+        Assert.HasCount(1, config.LibraryDirectories);
+
+        config.RemoveLibraryDirectory(folder);
+        Assert.HasCount(0, config.LibraryDirectories);
+    }
+
+    [TestMethod]
+    public void LibraryRemoveCanDeleteTheFile()
+    {
+        var path = WritePng("delete-me.png", 64, 64, new SKColor(0x20, 0x30, 0x40));
+        var library = new WallpaperLibrary(new WallflowConfig());
+        Assert.AreEqual(1, library.AddFiles([path]));
+        var added = library.ByPath(Path.Combine(WallflowPaths.WallpaperDirectory, "delete-me.png"));
+
+        Assert.IsNotNull(added);
+        Assert.IsTrue(File.Exists(added.Path));
+        Assert.IsTrue(library.Remove(added.Id, deleteFile: true));
+
+        Assert.IsFalse(File.Exists(added.Path));
+        Assert.IsNull(library.Get(added.Id));
+    }
+
+    [TestMethod]
+    public void DesktopBackendsAdvertiseTheirCapabilities()
+    {
+        var gnome = new LinuxWallpaperBackend(desktop: "GNOME", isWayland: true);
+        var sway = new LinuxWallpaperBackend(desktop: "Sway", isWayland: true);
+
+        Assert.IsFalse(gnome.Capabilities.PerMonitor);
+        Assert.IsTrue(sway.Capabilities.PerMonitor);
+        Assert.IsTrue(sway.Capabilities.AccentColor);
+
+        var session = DesktopEnvironment.Detect();
+        Assert.IsFalse(string.IsNullOrEmpty(session.Label));
+        Assert.IsTrue(session.SessionType is "x11" or "wayland" or "headless");
+    }
+
+    private string WritePng(string name, int width, int height, SKColor color)
+    {
+        var path = Path.Combine(_testDirectory, name);
+        using var bitmap = new SKBitmap(width, height);
+        using (var canvas = new SKCanvas(bitmap))
+            canvas.Clear(color);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var stream = File.Create(path);
+        data.SaveTo(stream);
+        return path;
+    }
+
+    private static (int Red, int Green, int Blue) ParseHex(string color) => (
+        Convert.ToInt32(color.Substring(1, 2), 16),
+        Convert.ToInt32(color.Substring(3, 2), 16),
+        Convert.ToInt32(color.Substring(5, 2), 16));
+
     private sealed class FakePlayback : IWallpaperPlayback
     {
         public IReadOnlyList<MonitorInfo> Monitors => [];

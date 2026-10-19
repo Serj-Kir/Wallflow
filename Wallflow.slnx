@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Wallflow.App.Tests/Wallflow.App.Tests.csproj" />
+    <Project Path="src/Wallflow.App/Wallflow.App.csproj" />
+  </Folder>
+</Solution>

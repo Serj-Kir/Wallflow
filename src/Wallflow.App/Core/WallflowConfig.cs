@@ -102,6 +102,16 @@ public sealed class WallflowConfig
         Save();
     }
 
+    public void RemoveLibraryDirectory(string directory)
+    {
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var remaining = LibraryDirectories.Where(item => !comparer.Equals(item, directory)).ToArray();
+        if (remaining.Length == LibraryDirectories.Count)
+            return;
+        _data["library_dirs"] = JsonSerializer.SerializeToNode(remaining, JsonOptions);
+        Save();
+    }
+
     public List<Profile> LoadProfiles() => LoadSection<Profile>("profiles");
     public List<Playlist> LoadPlaylists() => LoadSection<Playlist>("playlists");
     public List<ScheduleRule> LoadRules() => LoadSection<ScheduleRule>("rules");
@@ -195,6 +205,7 @@ public sealed class WallflowConfig
         ["pause_when_other_app_fullscreen"] = true,
         ["disable_battery_saver_live"] = true,
         ["library_dirs"] = new JsonArray(),
+        ["download_folder"] = "",
         ["watch_library"] = true,
         ["thumb_size"] = 220,
         ["remember_last_wallpaper"] = true,

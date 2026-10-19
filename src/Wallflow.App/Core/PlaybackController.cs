@@ -39,6 +39,8 @@ public sealed class DesktopWallpaperPlayback : IWallpaperPlayback, IDisposable
     }
 
     public IReadOnlyList<MonitorInfo> Monitors => GetScreens().Select(ToMonitorInfo).ToArray();
+    public string BackendName => _backend.Name;
+    public BackendCapabilities Capabilities => _backend.Capabilities;
     public Wallpaper? Current { get; private set; }
     public bool Paused { get; private set; }
     public event EventHandler<Wallpaper?>? WallpaperChanged;
@@ -62,14 +64,16 @@ public sealed class DesktopWallpaperPlayback : IWallpaperPlayback, IDisposable
         {
             ApplySurfaces(screens, wallpaper, monitors, transitionMs);
         }
+        else if (wallpaper is null)
+        {
+            CloseSurfaces();
+        }
         else
         {
-            var fit = _config?.Get("linux_wallpaper_fit", wallpaper?.DisplayFit ?? "fill")
-                ?? wallpaper?.DisplayFit
-                ?? "fill";
-            if (wallpaper is not null && !_backend.SetWallpaper(wallpaper.Path, fit))
-                throw new IOException($"The {_backend.Name} desktop wallpaper API rejected {wallpaper.Path}.");
             CloseSurfaces();
+            var fit = _config?.Get("linux_wallpaper_fit", wallpaper.DisplayFit) ?? wallpaper.DisplayFit;
+            if (!_backend.SetWallpaper(wallpaper.Path, fit))
+                throw new IOException($"The {_backend.Name} desktop wallpaper API rejected {wallpaper.Path}.");
         }
 
         _monitorAssignments = monitors is null
@@ -86,6 +90,21 @@ public sealed class DesktopWallpaperPlayback : IWallpaperPlayback, IDisposable
     {
         if (Current is not null)
             SetCurrent(Current, _monitorAssignments, transitionMs: 0);
+    }
+
+    /// <summary>
+    /// Explicitly removes the wallpaper: closes the live surfaces and asks the desktop
+    /// backend to clear its picture. Never called implicitly, so starting Wallflow with
+    /// an empty profile leaves the existing desktop wallpaper alone.
+    /// </summary>
+    public void ClearDesktop()
+    {
+        CloseSurfaces();
+        _backend.Clear();
+        _monitorAssignments = null;
+        _usesSurfaces = false;
+        Current = null;
+        WallpaperChanged?.Invoke(this, null);
     }
 
     public void SetPaused(bool paused)
@@ -579,6 +598,18 @@ public sealed class PlaybackController : IDisposable
         Step(1);
     }
 
+    /// <summary>Re-applies the accent colour for the active profile and wallpaper.</summary>
+    public void ReapplyAccent()
+    {
+        if (ActiveProfile is not { } profile)
+            return;
+        var wallpaper = ActivePlaylist is { Items.Count: > 0 } playlist && _playlistPosition >= 0 &&
+                        _playlistPosition < playlist.Items.Count
+            ? _library.Get(playlist.Items[_playlistPosition])
+            : profile.WallpaperId is { } id ? _library.Get(id) : null;
+        ApplyAccent(profile, wallpaper);
+    }
+
     public void AddRule(ScheduleRule rule)
     {
         ArgumentNullException.ThrowIfNull(rule);
@@ -655,13 +686,28 @@ public sealed class PlaybackController : IDisposable
             _advanceAt = null;
         }
 
-        if (!string.Equals(_config.Get("accent_color", "auto"), "none", StringComparison.Ordinal))
-        {
-            if (!string.IsNullOrWhiteSpace(profile.AccentColor))
-                _player.ApplyAccent(profile.AccentColor);
-        }
+        ApplyAccent(profile, wallpaper);
         if (_activePauseReason.HasValue)
             _player.SetPaused(true);
+    }
+
+    /// <summary>
+    /// Applies the profile accent, or the wallpaper's dominant colour when the
+    /// accent is set to automatic.
+    /// </summary>
+    private void ApplyAccent(Profile profile, Wallpaper? wallpaper)
+    {
+        var mode = _config.Get("accent_color", "auto");
+        if (string.Equals(mode, "none", StringComparison.OrdinalIgnoreCase))
+            return;
+        if (!string.IsNullOrWhiteSpace(profile.AccentColor))
+        {
+            _player.ApplyAccent(profile.AccentColor);
+            return;
+        }
+        if (string.Equals(mode, "auto", StringComparison.OrdinalIgnoreCase) &&
+            wallpaper is { WallpaperType: WallpaperKind.Image })
+            _player.ApplyAccent(AccentColor.Dominant(wallpaper.Path));
     }
 
     private void SetPlayback(

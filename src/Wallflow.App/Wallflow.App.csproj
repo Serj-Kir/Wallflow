@@ -1,10 +1,14 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- A console-less window on Windows, a normal console process elsewhere so CLI output works. -->
+    <OutputType Condition="$([MSBuild]::IsOSPlatform('Windows'))">WinExe</OutputType>
+    <OutputType Condition="!$([MSBuild]::IsOSPlatform('Windows'))">Exe</OutputType>
+    <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>
+    <AssemblyName>Wallflow</AssemblyName>
+    <RootNamespace>Wallflow.App</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,7 +23,17 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.4" />
     <PackageReference Include="LibVLCSharp.Avalonia" Version="3.10.2" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
+  </ItemGroup>
+
+  <!--
+    Video runtimes are only bundled where the platform provides none. Linux uses the
+    system libvlc (libvlc.so), which keeps the package free of a second codec stack.
+  -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.24" />
+  </ItemGroup>
+
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
     <PackageReference Include="VideoLAN.LibVLC.Mac" Version="3.1.3.2" />
   </ItemGroup>
 </Project>

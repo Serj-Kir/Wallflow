@@ -169,7 +169,9 @@ public sealed class WallpaperLibrary
         var directory = WallflowPaths.WallpaperDirectory;
         Directory.CreateDirectory(directory);
         var target = GetUniquePath(Path.Combine(directory, WallpaperSources.SuggestFilename(result)));
-        File.Copy(downloadedPath, target);
+        if (!string.Equals(Path.GetFullPath(downloadedPath), Path.GetFullPath(target),
+                StringComparison.OrdinalIgnoreCase))
+            File.Copy(downloadedPath, target);
         var wallpaper = WallpaperSources.ResultToWallpaper(result, target);
         _items[wallpaper.Id] = wallpaper;
         Save();

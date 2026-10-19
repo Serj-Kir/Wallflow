@@ -21,7 +21,7 @@
         <Button Content="Расписание" Tag="schedule" Click="NavigateClick" HorizontalContentAlignment="Left" />
         <Button Content="Настройки" Tag="settings" Click="NavigateClick" HorizontalContentAlignment="Left" />
         <Border Height="1" Background="#3A3B42" Margin="0,12" />
-        <TextBlock Text="Перенос функций продолжается. Python-версия сохранена рядом." TextWrapping="Wrap" Foreground="#A7A9B3" />
+        <TextBlock Text="C#-редакция. Ctrl+1…6 — разделы, Ctrl+Space — пауза, Ctrl+←/→ — соседние обои." TextWrapping="Wrap" Foreground="#A7A9B3" />
       </StackPanel>
     </Border>
 
@@ -52,12 +52,16 @@
                    Background="#202127" BorderBrush="#373840" BorderThickness="1">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="core:Wallpaper">
-                <Grid ColumnDefinitions="*,Auto" Margin="8">
-                  <StackPanel Spacing="3">
+                <Grid ColumnDefinitions="Auto,*,Auto" Margin="6">
+                  <Border Width="64" Height="64" CornerRadius="6" Background="#272932" ClipToBounds="True">
+                    <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                  </Border>
+                  <StackPanel Grid.Column="1" Margin="10,0" Spacing="3" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding Path}" FontSize="12" Foreground="#A7A9B3" TextTrimming="CharacterEllipsis" />
                   </StackPanel>
-                  <TextBlock Grid.Column="1" Text="{Binding Kind}" Foreground="#A7A9B3" VerticalAlignment="Center" Margin="12,0,4,0" />
+                  <TextBlock Grid.Column="2" Text="{Binding KindLabel}" Foreground="#A7A9B3"
+                             VerticalAlignment="Center" Margin="12,0,4,0" />
                 </Grid>
               </DataTemplate>
             </ListBox.ItemTemplate>
@@ -70,6 +74,10 @@
             <Button Grid.Row="1" Grid.Column="3" Content="Сохранить описание" Click="SaveWallpaperMetadataClick" />
           </Grid>
           <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+            <Button Name="PropertiesButton" Content="Свойства" Click="PropertiesClick" IsEnabled="False" />
+            <Button Name="OpenFolderButton" Content="Открыть папку" Click="OpenWallpaperFolderClick" IsEnabled="False" />
+            <Button Name="CopyPathButton" Content="Копировать путь" Click="CopyPathClick" IsEnabled="False" />
+            <Button Name="DeleteButton" Content="Удалить" Click="DeleteWallpaperClick" IsEnabled="False" />
             <Button Name="FavoriteButton" Content="В избранное" Click="FavoriteClick" IsEnabled="False" />
             <Button Name="PreviewSceneButton" Content="Предпросмотр" Click="PreviewSceneClick" IsEnabled="False" />
             <Button Name="ApplyButton" Content="Применить обои" Click="ApplyClick" IsEnabled="False" />
@@ -189,6 +197,9 @@
             <ComboBox Name="PlaylistTransitionBox" Width="150">
               <ComboBoxItem Content="Без перехода" Tag="none" />
               <ComboBoxItem Content="Затухание" Tag="fade" />
+              <ComboBoxItem Content="Сдвиг" Tag="slide" />
+              <ComboBoxItem Content="Масштаб" Tag="zoom" />
+              <ComboBoxItem Content="Затёртка" Tag="wipe" />
             </ComboBox>
             <TextBlock Text="Длительность, мс:" VerticalAlignment="Center" />
             <TextBox Name="PlaylistTransitionMsBox" Width="80" />
@@ -293,6 +304,48 @@
             <CheckBox Name="LoopVideosBox" Content="Повторять видео бесконечно" Click="SettingChanged" />
             <CheckBox Name="VideoAudioBox" Content="Включить звук в видео-обоях" Click="SettingChanged" />
             <CheckBox Name="InteractiveWebBox" Content="HTML-обои реагируют на клики мышью" Click="SettingChanged" />
+            <TextBlock Text="Оформление и библиотека" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <TextBlock Text="Акцентный цвет рабочего стола" FontSize="14" FontWeight="SemiBold" />
+            <ComboBox Name="AccentColorBox" SelectionChanged="AccentColorSelectionChanged">
+              <ComboBoxItem Content="Автоматически — из обоев" Tag="auto" />
+              <ComboBoxItem Content="Синий" Tag="#5b8cff" />
+              <ComboBoxItem Content="Фиолетовый" Tag="#8a5bff" />
+              <ComboBoxItem Content="Зелёный" Tag="#3fb27f" />
+              <ComboBoxItem Content="Оранжевый" Tag="#e0803f" />
+              <ComboBoxItem Content="Не менять" Tag="none" />
+            </ComboBox>
+            <TextBlock Text="Поддерживают Windows, Sway и KDE Plasma; в режиме «из обоев» цвет берётся из текущего фото." TextWrapping="Wrap" Foreground="#A7A9B3" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Размер миниатюр:" VerticalAlignment="Center" />
+              <ComboBox Name="ThumbSizeBox" Width="110" SelectionChanged="ThumbSizeSelectionChanged">
+                <ComboBoxItem Content="140 px" Tag="140" />
+                <ComboBoxItem Content="180 px" Tag="180" />
+                <ComboBoxItem Content="220 px" Tag="220" />
+                <ComboBoxItem Content="260 px" Tag="260" />
+                <ComboBoxItem Content="320 px" Tag="320" />
+              </ComboBox>
+            </StackPanel>
+            <TextBlock Text="Папки библиотеки" FontSize="14" FontWeight="SemiBold" />
+            <ListBox Name="LibraryDirectoriesList" Height="110" Background="#202127"
+                     BorderBrush="#373840" BorderThickness="1" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Добавить папку…" Click="AddFolderClick" />
+              <Button Content="Убрать папку" Click="RemoveLibraryDirectoryClick" />
+              <Button Content="Сканировать" Click="ScanClick" />
+            </StackPanel>
+            <TextBlock Text="Папка загрузок из интернета" FontSize="14" FontWeight="SemiBold" />
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+              <TextBox Name="DownloadFolderBox" IsReadOnly="True" PlaceholderText="Папка обоев по умолчанию" />
+              <Button Grid.Column="1" Content="Изменить…" Click="ChooseDownloadFolderClick" />
+              <Button Grid.Column="2" Content="Сбросить" Click="ResetDownloadFolderClick" />
+            </Grid>
+            <TextBlock Text="Данные и журнал" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="Открыть папку данных" Click="OpenDataFolderClick" />
+              <Button Content="Открыть журнал" Click="OpenLogFolderClick" />
+              <Button Content="Сбросить настройки" Click="ResetSettingsClick" />
+            </StackPanel>
+            <TextBlock Name="AboutText" Foreground="#A7A9B3" TextWrapping="Wrap" />
           </StackPanel>
         </ScrollViewer>
 
@@ -306,10 +359,16 @@
           <ListBox Name="SourceResultsList" Grid.Row="1" Background="#202127" BorderBrush="#373840" BorderThickness="1">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="sources:SearchResult">
-                <StackPanel Margin="8" Spacing="3">
-                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding Provider}" FontSize="12" Foreground="#A7A9B3" />
-                </StackPanel>
+                <Grid ColumnDefinitions="*,Auto" Margin="8">
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Author}" FontSize="12" Foreground="#A7A9B3" />
+                    <TextBlock Text="{Binding Provider}" FontSize="12" Foreground="#7d8494" />
+                  </StackPanel>
+                  <TextBlock Grid.Column="1" VerticalAlignment="Center" Foreground="#A7A9B3"
+                             FontSize="12" TextAlignment="Right"
+                             Text="{Binding License}" />
+                </Grid>
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
@@ -327,6 +386,7 @@
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
           <Button Content="◀" Click="PreviousClick" />
           <Button Content="▶" Click="NextClick" />
+          <Button Content="Стоп" Click="StopClick" />
         </StackPanel>
       </Grid>
     </Grid>

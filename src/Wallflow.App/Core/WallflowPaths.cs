@@ -26,13 +26,25 @@ public static class WallflowPaths
     }
 
     public static string WallpaperDirectory => Path.Combine(DataDirectory, "wallpapers");
-    public static string CacheDirectory => Path.Combine(
-        OperatingSystem.IsWindows()
-            ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-            : Environment.GetEnvironmentVariable("XDG_CACHE_HOME") is { Length: > 0 } cache
+    public static string ThumbnailDirectory => Path.Combine(DataDirectory, "thumbs");
+    public static string LogDirectory => Path.Combine(DataDirectory, "logs");
+    public static string CacheDirectory => Path.Combine(CacheRoot, AppDirectoryName);
+
+    private static string CacheRoot
+    {
+        get
+        {
+            if (OperatingSystem.IsWindows())
+                return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (OperatingSystem.IsMacOS())
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Caches");
+
+            return Environment.GetEnvironmentVariable("XDG_CACHE_HOME") is { Length: > 0 } cache
                 ? cache
-                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache"),
-        AppDirectoryName);
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache");
+        }
+    }
     public static string ConfigFile => Path.Combine(DataDirectory, "config.json");
     public static string LibraryFile => Path.Combine(DataDirectory, "library.json");
 

@@ -7,10 +7,15 @@ using Microsoft.Win32;
 
 namespace Wallflow.App.Core;
 
+/// <summary>What a desktop backend can do without application windows.</summary>
+public readonly record struct BackendCapabilities(bool PerMonitor, bool AccentColor, bool ClearToColor);
+
 public interface IWallpaperBackend
 {
     string Name { get; }
+    BackendCapabilities Capabilities { get; }
     bool SetWallpaper(string path, string fit = "fill");
+    bool Clear();
     bool SetAccentColor(string hexColor);
 }
 
@@ -33,6 +38,71 @@ internal static class WallpaperBackendHelpers
         if (value.Length != 6 || !value.All(char.IsAsciiHexDigit))
             return "#000000";
         return "#" + value.ToLowerInvariant();
+    }
+
+    public static ProcessStartInfo StartInfo(string executable, IEnumerable<string> arguments, bool redirectOutput = false) =>
+        StartInfoWith(executable, arguments, redirectOutput);
+
+    public static bool Run(string executable, params string[] arguments) =>
+        RunWith(executable, arguments);
+
+    public static string? RunForOutput(string executable, params string[] arguments) =>
+        RunForOutputWith(executable, arguments);
+
+    private static ProcessStartInfo StartInfoWith(string executable, IEnumerable<string> arguments, bool redirectOutput)
+    {
+        var info = new ProcessStartInfo(executable)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = redirectOutput,
+            RedirectStandardError = redirectOutput
+        };
+        foreach (var argument in arguments)
+            info.ArgumentList.Add(argument);
+        return info;
+    }
+
+    private static bool RunWith(string executable, IEnumerable<string> arguments)
+    {
+        try
+        {
+            using var process = Process.Start(StartInfoWith(executable, arguments, redirectOutput: false));
+            if (process is null)
+                return false;
+            if (!process.WaitForExit(5000))
+            {
+                process.Kill(entireProcessTree: true);
+                return false;
+            }
+            return process.ExitCode == 0;
+        }
+        catch (Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    private static string? RunForOutputWith(string executable, IEnumerable<string> arguments)
+    {
+        try
+        {
+            using var process = Process.Start(StartInfoWith(executable, arguments, redirectOutput: true));
+            if (process is null)
+                return null;
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            if (!process.WaitForExit(5000))
+            {
+                process.Kill(entireProcessTree: true);
+                return null;
+            }
+            var output = outputTask.GetAwaiter().GetResult();
+            return process.ExitCode == 0 ? output : null;
+        }
+        catch (Win32Exception)
+        {
+            return null;
+        }
     }
 }
 
@@ -58,6 +128,7 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
     private const uint SendChange = 0x02;
 
     public string Name => "Windows";
+    public BackendCapabilities Capabilities => new(PerMonitor: true, AccentColor: true, ClearToColor: true);
 
     public bool SetWallpaper(string path, string fit = "fill")
     {
@@ -67,16 +138,19 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
         return SystemParametersInfo(SpiSetDesktopWallpaper, 0, Path.GetFullPath(path), UpdateIniFile | SendChange);
     }
 
-    private void ApplyStyle(string fit)
+    public bool Clear() => SystemParametersInfo(SpiSetDesktopWallpaper, 0, "", UpdateIniFile | SendChange);
+
+    private static void ApplyStyle(string fit)
     {
 #pragma warning disable CA1416 // Registry is only available on Windows
-        var style = fit.ToLowerInvariant() switch
+        // WallpaperStyle is the documented (0 = centre, 2 = stretch, 6 = fit, 10 = fill, 22 = span).
+        var (style, tile) = fit.ToLowerInvariant() switch
         {
-            "fit" => "Center",
-            "stretch" => "Stretch",
-            "center" => "Center",
-            "tile" => "Tile",
-            _ => "Fill"
+            "fit" => ("6", "0"),
+            "stretch" => ("2", "0"),
+            "center" => ("0", "0"),
+            "tile" => ("0", "1"),
+            _ => ("10", "0")
         };
         try
         {
@@ -85,12 +159,12 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
             if (key is null)
                 return;
             key.SetValue("WallpaperStyle", style, Microsoft.Win32.RegistryValueKind.String);
-            key.SetValue("TileWallpaper", style == "Tile" ? "1" : "0",
-                Microsoft.Win32.RegistryValueKind.String);
+            key.SetValue("TileWallpaper", tile, Microsoft.Win32.RegistryValueKind.String);
         }
         catch (Exception exception) when (
             exception is IOException or SecurityException or InvalidOperationException)
         {
+            Log.Warn("Could not persist the Windows wallpaper fit mode", exception);
         }
 #pragma warning restore CA1416
     }
@@ -118,6 +192,7 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
         catch (Exception exception) when (
             exception is IOException or SecurityException or InvalidOperationException)
         {
+            Log.Warn("Could not set the Windows accent colour", exception);
         }
 #pragma warning restore CA1416
         return true;
@@ -131,6 +206,7 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
 internal sealed class MacOsWallpaperBackend : IWallpaperBackend
 {
     public string Name => "macOS";
+    public BackendCapabilities Capabilities => new(PerMonitor: false, AccentColor: false, ClearToColor: false);
 
     public bool SetWallpaper(string path, string fit = "fill")
     {
@@ -138,41 +214,13 @@ internal sealed class MacOsWallpaperBackend : IWallpaperBackend
             throw new FileNotFoundException("Wallpaper image does not exist.", path);
 
         var escapedPath = Path.GetFullPath(path).Replace("\\", "\\\\").Replace("\"", "\\\"");
-        return Run("/usr/bin/osascript", "-e",
+        return WallpaperBackendHelpers.Run("/usr/bin/osascript", "-e",
             $"tell application \"System Events\" to set picture of every desktop to POSIX file \"{escapedPath}\"");
     }
 
+    public bool Clear() => false;
+
     public bool SetAccentColor(string hexColor) => false;
-
-    private static bool Run(string executable, params string[] arguments)
-    {
-        if (!File.Exists(executable))
-            return false;
-        try
-        {
-            using var process = Process.Start(CreateStartInfo(executable, arguments));
-            if (process is null)
-                return false;
-            if (!process.WaitForExit(5000))
-            {
-                process.Kill(entireProcessTree: true);
-                return false;
-            }
-            return process.ExitCode == 0;
-        }
-        catch (Win32Exception)
-        {
-            return false;
-        }
-    }
-
-    private static ProcessStartInfo CreateStartInfo(string executable, IEnumerable<string> arguments)
-    {
-        var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true };
-        foreach (var argument in arguments)
-            info.ArgumentList.Add(argument);
-        return info;
-    }
 }
 
 internal sealed class LinuxWallpaperBackend : IWallpaperBackend
@@ -188,15 +236,18 @@ internal sealed class LinuxWallpaperBackend : IWallpaperBackend
         string? desktop = null,
         bool? isWayland = null)
     {
-        _runCommand = runCommand ?? ((executable, arguments) => Run(executable, arguments.ToArray()));
+        _runCommand = runCommand ?? ((executable, arguments) => WallpaperBackendHelpers.Run(executable, arguments.ToArray()));
         _desktop = (desktop ?? Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP") ?? "")
             .ToLowerInvariant();
-        _isWayland = isWayland ??
-            (string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase) ||
-             !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY")));
+        _isWayland = isWayland ?? DesktopEnvironment.Detect().IsWayland;
     }
 
     public string Name => "Linux";
+    public BackendCapabilities Capabilities => new(
+        PerMonitor: _desktop.Contains("kde") || _desktop.Contains("plasma") || _desktop.Contains("xfce") ||
+                    _desktop.Contains("sway") || _desktop.Contains("hyprland") || _desktop.Contains("lxqt"),
+        AccentColor: _desktop.Contains("sway") || _desktop.Contains("kde"),
+        ClearToColor: !IsGnomeOrCinnamon());
 
     public bool SetWallpaper(string path, string fit = "fill")
     {
@@ -205,9 +256,10 @@ internal sealed class LinuxWallpaperBackend : IWallpaperBackend
 
         var fullPath = Path.GetFullPath(path);
         var uri = new Uri(fullPath).AbsoluteUri;
+        var normalizedFit = NormalizeFit(fit);
         if (IsGnomeOrCinnamon())
         {
-            if (SetGnomeWallpaper(uri, fit))
+            if (SetGnomeWallpaper(uri, normalizedFit))
                 return true;
             if (_isWayland)
                 return false;
@@ -217,21 +269,42 @@ internal sealed class LinuxWallpaperBackend : IWallpaperBackend
             _runCommand("gsettings", ["set", GnomeSchema, "picture-uri", uri]))
             return true;
 
-        if (_desktop.Contains("xfce") && SetXfceWallpaper(fullPath))
+        if (_desktop.Contains("xfce") && SetXfceWallpaper(fullPath, normalizedFit))
             return true;
 
         if (_desktop.Contains("kde") && _runCommand("plasma-apply-wallpaperimage", [fullPath]))
             return true;
 
-        if (_desktop.Contains("sway") && _runCommand("swaymsg", ["output", "*", "bg", fullPath, "fill"]))
+        if (_desktop.Contains("sway") &&
+            _runCommand("swaymsg", ["output", "*", "bg", fullPath, SwayFit(normalizedFit)]))
             return true;
 
-        if (_desktop.Contains("hyprland") &&
-            (_runCommand("hyprctl", ["hyprpaper", "wallpaper", $",{fullPath}"]) ||
-             _runCommand("hyprctl", ["dispatch", "exec", $"hyprpaper -- {fullPath}"])))
+        if (_desktop.Contains("hyprland") && SetHyprlandWallpaper(fullPath))
             return true;
 
-        return !_isWayland && _runCommand("feh", ["--bg-fill", fullPath]);
+        if (_desktop.Contains("lxqt") && SetLxqtWallpaper(fullPath))
+            return true;
+
+        if (!_isWayland && _runCommand("feh", [$"--bg-{FehStyle(normalizedFit)}", fullPath]))
+            return true;
+
+        // Last resort on X11: only stretching is possible without a helper tool.
+        return !_isWayland && normalizedFit == "stretch" &&
+            _runCommand("xsetroot", ["-bitmap", fullPath]);
+    }
+
+    public bool Clear()
+    {
+        if (IsGnomeOrCinnamon())
+            return SetGnomeWallpaper("", "fill");
+
+        if (_desktop.Contains("sway"))
+            return _runCommand("swaymsg", ["output", "*", "bg", "#000000", "solid_color"]);
+        if (_desktop.Contains("kde"))
+            return SetAccentColor("#000000");
+        if (_desktop.Contains("lxqt"))
+            return SetLxqtWallpaper("");
+        return !_isWayland && _runCommand("xsetroot", ["-solid", "#000000"]);
     }
 
     public bool SetAccentColor(string hexColor)
@@ -259,9 +332,17 @@ internal sealed class LinuxWallpaperBackend : IWallpaperBackend
         return false;
     }
 
-    private static bool SetXfceWallpaper(string path)
+    private bool SetXfceWallpaper(string path, string fit)
     {
-        var query = RunForOutput("xfconf-query", ["-c", "xfce4-desktop", "-l"]);
+        var style = fit switch
+        {
+            "fit" => "5",
+            "stretch" => "3",
+            "center" => "1",
+            "tile" => "2",
+            _ => "4"
+        };
+        var query = WallpaperBackendHelpers.RunForOutput("xfconf-query", "-c", "xfce4-desktop", "-l");
         if (query is null)
             return false;
 
@@ -270,11 +351,52 @@ internal sealed class LinuxWallpaperBackend : IWallpaperBackend
                                property.EndsWith("/last-image", StringComparison.Ordinal))
             .ToArray();
         if (properties.Length == 0)
-            return Run("xfconf-query", "-c", "xfce4-desktop", "-p",
-                "/backdrop/screen0/monitor0/workspace0/last-image", "--create", "-t", "string", "-s", path);
+        {
+            return WallpaperBackendHelpers.Run("xfconf-query", "-c", "xfce4-desktop", "-p",
+                       "/backdrop/screen0/monitor0/workspace0/last-image", "--create", "-t", "string", "-s", path) &&
+                   WallpaperBackendHelpers.Run("xfconf-query", "-c", "xfce4-desktop", "-p",
+                       "/backdrop/screen0/monitor0/workspace0/image-style", "--create", "-t", "int", "-s", style);
+        }
 
         return properties.All(property =>
-            Run("xfconf-query", "-c", "xfce4-desktop", "-p", property, "-s", path));
+            WallpaperBackendHelpers.Run("xfconf-query", "-c", "xfce4-desktop", "-p", property, "-s", path) &&
+            WallpaperBackendHelpers.Run("xfconf-query", "-c", "xfce4-desktop", "-p",
+                property[..^"/last-image".Length] + "/image-style", "-s", style));
+    }
+
+    private bool SetHyprlandWallpaper(string path)
+    {
+        if (_runCommand("hyprctl", ["hyprpaper", "wallpaper", $",{path}"]))
+            return true;
+        return _runCommand("hyprctl", ["dispatch", "exec", $"hyprpaper -- {path}"]) ||
+               _runCommand("hyprctl", ["wallpaper", "set", path]);
+    }
+
+    private bool SetLxqtWallpaper(string path)
+    {
+        var configuration = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".config", "pcmanfm-qt", "wallpaper");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(configuration)!);
+            if (path.Length == 0)
+            {
+                File.WriteAllText(configuration, "");
+            }
+            else
+            {
+                var uri = new Uri(Path.GetFullPath(path)).AbsoluteUri;
+                File.WriteAllText(configuration, $"Screen-1/{uri}" + Environment.NewLine);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn("Could not write the LXQt wallpaper configuration", exception);
+            return false;
+        }
+
+        return _runCommand("pcmanfm-qt", ["--reconfigure"]);
     }
 
     private bool SetGnomeWallpaper(string uri, string fit)
@@ -320,68 +442,30 @@ internal sealed class LinuxWallpaperBackend : IWallpaperBackend
         _ => "zoom"
     };
 
+    internal static string SwayFit(string fit) => fit.ToLowerInvariant() switch
+    {
+        "fit" => "fit",
+        "stretch" => "stretch",
+        "center" => "center",
+        _ => "fill"
+    };
+
+    internal static string FehStyle(string fit) => fit.ToLowerInvariant() switch
+    {
+        "fit" => "fit",
+        "stretch" => "scale",
+        "center" => "center",
+        "tile" => "tile",
+        _ => "fill"
+    };
+
+    internal static string NormalizeFit(string fit)
+    {
+        var normalized = fit.ToLowerInvariant();
+        return normalized is "fill" or "fit" or "stretch" or "center" or "tile" ? normalized : "fill";
+    }
+
     private bool IsGnomeOrCinnamon() =>
         _desktop.Contains("gnome") || _desktop.Contains("unity") || _desktop.Contains("cinnamon") ||
         _desktop.Contains("mate") || _desktop.Contains("budgie");
-
-    private static bool Run(string executable, params string[] arguments)
-    {
-        try
-        {
-            using var process = Process.Start(CreateStartInfo(executable, arguments));
-            if (process is null)
-                return false;
-            if (!process.WaitForExit(5000))
-            {
-                process.Kill(entireProcessTree: true);
-                return false;
-            }
-
-            return process.ExitCode == 0;
-        }
-        catch (Win32Exception)
-        {
-            return false;
-        }
-    }
-
-    private static string? RunForOutput(string executable, params string[] arguments)
-    {
-        try
-        {
-            using var process = Process.Start(CreateStartInfo(executable, arguments, redirectOutput: true));
-            if (process is null)
-                return null;
-
-            var outputTask = process.StandardOutput.ReadToEndAsync();
-            if (!process.WaitForExit(5000))
-            {
-                process.Kill(entireProcessTree: true);
-                return null;
-            }
-            var output = outputTask.GetAwaiter().GetResult();
-            return process.ExitCode == 0 ? output : null;
-        }
-        catch (Win32Exception)
-        {
-            return null;
-        }
-    }
-
-    private static ProcessStartInfo CreateStartInfo(
-        string executable,
-        IEnumerable<string> arguments,
-        bool redirectOutput = false)
-    {
-        var info = new ProcessStartInfo(executable)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = redirectOutput,
-            RedirectStandardError = redirectOutput
-        };
-        foreach (var argument in arguments)
-            info.ArgumentList.Add(argument);
-        return info;
-    }
 }
