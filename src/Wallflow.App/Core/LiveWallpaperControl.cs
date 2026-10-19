@@ -82,7 +82,7 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
                     LoadScene();
                     break;
                 case WallpaperKind.Video:
-                    LoadVideo();
+                    await LoadVideoAsync();
                     break;
                 case WallpaperKind.Web:
                     await LoadWebAsync();
@@ -177,7 +177,13 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
             return;
 
         Stop();
-        _mediaPlayer?.Dispose();
+        if (_mediaPlayer is not null)
+        {
+            _mediaPlayer.Vout -= OnVideoOutput;
+            _mediaPlayer.EncounteredError -= OnVideoFailed;
+            _mediaPlayer.EndReached -= OnVideoEnded;
+            _mediaPlayer.Dispose();
+        }
         _media?.Dispose();
         _animatedImageRenderer?.Dispose();
         _bitmap?.Dispose();
@@ -213,38 +219,79 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
         scene.Start();
     }
 
-    private void LoadVideo()
+    private async Task LoadVideoAsync()
     {
         if (!File.Exists(_wallpaper.Path))
             throw new FileNotFoundException("Video wallpaper does not exist.", _wallpaper.Path);
+        if (new FileInfo(_wallpaper.Path).Length == 0)
+            throw new InvalidDataException($"Video wallpaper file is empty: {_wallpaper.Path}");
 
-        var libVlc = SharedLibVlc.Value;
+        // Starting LibVLC loads hundreds of plug-ins, which can take seconds on a cold
+        // start, so it is never done on the UI thread.
+        var libVlc = await Task.Run(() => SharedLibVlc.Value);
         _mediaPlayer = new MediaPlayer(libVlc)
         {
             Volume = _videoAudio ? 50 : 0
         };
         _mediaPlayer.EndReached += OnVideoEnded;
+        _mediaPlayer.EncounteredError += OnVideoFailed;
+        _mediaPlayer.Vout += OnVideoOutput;
         _media = new Media(libVlc, _wallpaper.Path, FromType.FromPath);
         var view = new VideoView { MediaPlayer = _mediaPlayer };
         view.AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(StartVideo);
         _renderer = view;
         Content = view;
-        _ = ProbeResolutionAsync();
     }
 
-    private async Task ProbeResolutionAsync()
+    /// <summary>
+    /// Takes the source resolution from the player that is already decoding the video.
+    /// Parsing the file next to a running player crashed native libvlc, and the player
+    /// knows its own size at no extra cost.
+    /// </summary>
+    private void OnVideoOutput(object? sender, MediaPlayerVoutEventArgs e)
     {
-        var size = await MediaInfo.TryGetVideoSizeAsync(_wallpaper.Path).ConfigureAwait(false);
-        if (size is not { } resolved)
+        if (e.Count <= 0 || _mediaPlayer is null)
             return;
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            if (_disposed)
-                return;
-            SourceSize = resolved;
-            SourceResolutionResolved?.Invoke(this, resolved);
-        });
+        _mediaPlayer.Vout -= OnVideoOutput;
+        _ = ReadVideoSizeAsync();
     }
+
+    private async Task ReadVideoSizeAsync()
+    {
+        for (var attempt = 0; attempt < 20 && !_disposed; attempt++)
+        {
+            var player = _mediaPlayer;
+            if (player is null)
+                return;
+            try
+            {
+                uint width = 0;
+                uint height = 0;
+                if (player.Size(0, ref width, ref height) && width > 0 && height > 0)
+                {
+                    ReportSourceSize(new MediaSize((int)width, (int)height));
+                    return;
+                }
+            }
+            catch (Exception exception) when (exception is VLCException or ObjectDisposedException)
+            {
+                return;
+            }
+
+            await Task.Delay(150).ConfigureAwait(false);
+        }
+    }
+
+    private void ReportSourceSize(MediaSize size) => Dispatcher.UIThread.Post(() =>
+    {
+        if (_disposed)
+            return;
+        SourceSize = size;
+        SourceResolutionResolved?.Invoke(this, size);
+    });
+
+    private void OnVideoFailed(object? sender, EventArgs e) =>
+        SetError($"LibVLC could not play the video: {_wallpaper.Path}");
 
     private Task LoadWebAsync()
     {

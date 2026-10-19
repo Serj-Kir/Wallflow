@@ -291,6 +291,38 @@ public sealed class WallpaperCoreTests
     }
 
     [TestMethod]
+    public void EmptyWallpaperFilesAreSkippedAndDroppedFromTheLibrary()
+    {
+        var pictures = Path.Combine(_testDirectory, "Pictures");
+        Directory.CreateDirectory(pictures);
+        var broken = Path.Combine(pictures, "broken.mp4");
+        var good = Path.Combine(pictures, "good.jpg");
+        File.WriteAllBytes(broken, [0x08]);
+        File.WriteAllBytes(good, [0x09]);
+
+        var config = new WallflowConfig();
+        config.AddLibraryDirectories([pictures]);
+        var library = new WallpaperLibrary(config);
+        Assert.AreEqual(2, library.Scan());
+        Assert.IsNotNull(library.Get(Wallpaper.IdForPath(broken)));
+
+        Assert.IsTrue(WallpaperLibrary.IsUsable(good));
+        Assert.IsTrue(WallpaperLibrary.IsUsable(pictures));
+        Assert.IsFalse(WallpaperLibrary.IsUsable(Path.Combine(pictures, "missing.jpg")));
+
+        // A failed download leaves a zero-byte file: it stops being a wallpaper.
+        File.WriteAllBytes(broken, []);
+        Assert.IsFalse(WallpaperLibrary.IsUsable(broken));
+        Assert.AreEqual(1, library.Scan(), "only the intact file may be indexed");
+        Assert.IsNull(library.Get(Wallpaper.IdForPath(broken)));
+        Assert.HasCount(1, library.Search(""));
+
+        // Importing ignores it as well.
+        Assert.AreEqual(1, library.AddFiles([broken, good]));
+        Assert.AreEqual(1, library.ImportDirectory(pictures));
+    }
+
+    [TestMethod]
     public void LibraryFiltersByKindFavouriteTagAndFolder()
     {
         var pictures = Path.Combine(_testDirectory, "Pictures");

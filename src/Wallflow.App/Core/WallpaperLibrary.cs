@@ -45,10 +45,27 @@ public sealed class WallpaperLibrary
     }
 
     public Wallpaper? Get(string id) =>
-        _items.TryGetValue(id, out var wallpaper) &&
-        (File.Exists(wallpaper.Path) || Directory.Exists(wallpaper.Path))
+        _items.TryGetValue(id, out var wallpaper) && IsUsable(wallpaper.Path)
             ? wallpaper
             : null;
+
+    /// <summary>
+    /// A wallpaper is usable when it exists and is not an empty file. Zero-byte files
+    /// show up after a failed download and cannot be played or drawn.
+    /// </summary>
+    public static bool IsUsable(string path)
+    {
+        if (Directory.Exists(path))
+            return true;
+        try
+        {
+            return File.Exists(path) && new FileInfo(path).Length > 0;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     public Wallpaper? ByPath(string path) =>
         _items.TryGetValue(Wallpaper.IdForPath(path), out var wallpaper)
@@ -125,7 +142,7 @@ public sealed class WallpaperLibrary
             }
         }
 
-        foreach (var staleId in _items.Where(pair => !seen.Contains(pair.Key) && !File.Exists(pair.Value.Path))
+        foreach (var staleId in _items.Where(pair => !seen.Contains(pair.Key) && !IsUsable(pair.Value.Path))
                      .Select(pair => pair.Key).ToArray())
             _items.Remove(staleId);
 
@@ -142,6 +159,11 @@ public sealed class WallpaperLibrary
         {
             if (!File.Exists(source))
                 continue;
+            if (!IsUsable(source))
+            {
+                Log.Warn($"Skipped an empty wallpaper file: {source}");
+                continue;
+            }
 
             var filename = Path.GetFileName(source);
             var target = Path.Combine(targetDirectory, filename);
@@ -193,7 +215,7 @@ public sealed class WallpaperLibrary
         var tagSet = tags?.ToHashSet(StringComparer.Ordinal);
         var normalizedFolder = string.IsNullOrWhiteSpace(folder) ? "" : Path.GetFullPath(folder);
         return _items.Values
-            .Where(item => File.Exists(item.Path) || Directory.Exists(item.Path))
+            .Where(item => IsUsable(item.Path))
             .Where(item => !favouritesOnly || item.Favourite)
             .Where(item => kindSet is null || kindSet.Count == 0 || kindSet.Contains(item.WallpaperType))
             .Where(item => tagSet is null || tagSet.Count == 0 || item.Tags.Any(tag => tagSet.Contains(tag)))
@@ -217,7 +239,7 @@ public sealed class WallpaperLibrary
     public IReadOnlyList<string> Tags()
     {
         return _items.Values
-            .Where(item => File.Exists(item.Path) || Directory.Exists(item.Path))
+            .Where(item => IsUsable(item.Path))
             .SelectMany(item => item.Tags)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(tag => tag, StringComparer.Ordinal)
@@ -233,6 +255,8 @@ public sealed class WallpaperLibrary
         var added = 0;
         foreach (var source in EnumerateFiles(root))
         {
+            if (!IsUsable(source))
+                continue;
             var relativeParent = Path.GetRelativePath(root, Path.GetDirectoryName(source)!);
             var safeSegments = relativeParent == "."
                 ? []
@@ -314,8 +338,10 @@ public sealed class WallpaperLibrary
                 {
                     if (string.Equals(Path.GetFileName(file), "index.html", StringComparison.OrdinalIgnoreCase))
                         yield return Path.GetFullPath(Path.GetDirectoryName(file)!);
-                    else
+                    else if (IsUsable(file))
                         yield return Path.GetFullPath(file);
+                    else
+                        Log.Warn($"Skipped an empty wallpaper file: {file}");
                 }
             }
         }

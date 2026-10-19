@@ -32,29 +32,18 @@ public static class WallpaperDialogs
         Add(panel, $"Тип: {wallpaper.KindLabel}", 13);
         Add(panel, $"Путь: {wallpaper.Path}", 13, muted: true, wrap: true);
 
+        var resolutionText = new TextBlock
+        {
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Text = "Разрешение: определяется…"
+        };
         if (wallpaper.WallpaperType is WallpaperKind.Image or WallpaperKind.Video)
         {
-            var size = await Task.Run(() => MediaInfo.TryGetSizeAsync(wallpaper).GetAwaiter().GetResult());
-            Add(panel, size is { } resolution
-                ? $"Разрешение: {MediaInfo.Describe(resolution)}"
-                : "Разрешение: неизвестно", 13);
-            if (size is { } measured)
-            {
-                var widest = monitors.Count == 0 ? null : monitors.OrderByDescending(monitor => monitor.Width).First();
-                if (widest is not null && measured.Width < widest.Width)
-                {
-                    var factor = System.Globalization.CultureInfo.InvariantCulture;
-                    Add(panel,
-                        string.Create(factor,
-                            $"Меньше монитора ({widest.Width}×{widest.Height}) — при показе будет растянуто в " +
-                            $"{widest.Width / (double)measured.Width:0.0} раз и станет размытым"),
-                        12, muted: true, wrap: true);
-                }
-                else if (widest is not null)
-                {
-                    Add(panel, $"Монитор: {widest.Width}×{widest.Height} — разрешения хватает", 12, muted: true);
-                }
-            }
+            panel.Children.Add(resolutionText);
+            // Resolving a video reads the file with LibVLC, which is slow on a cold
+            // start, so the window opens right away and the line fills in later.
+            _ = FillResolutionAsync(wallpaper, monitors, panel, resolutionText);
         }
 
         if (File.Exists(wallpaper.Path))
@@ -69,6 +58,47 @@ public static class WallpaperDialogs
             Add(panel, $"Источник: {wallpaper.SourceUrl}", 12, muted: true, wrap: true);
 
         await ShowAsync(owner, $"Свойства — {wallpaper.Name}", panel, [("Закрыть", true)]);
+    }
+
+    private static async Task FillResolutionAsync(
+        Wallpaper wallpaper,
+        IReadOnlyList<MonitorInfo> monitors,
+        StackPanel panel,
+        TextBlock target)
+    {
+        MediaSize? size;
+        try
+        {
+            size = await Task.Run(() => MediaInfo.TryGetSizeAsync(wallpaper));
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            size = null;
+        }
+
+        if (size is not { } measured)
+        {
+            target.Text = "Разрешение: неизвестно";
+            return;
+        }
+
+        target.Text = $"Разрешение: {MediaInfo.Describe(measured)}";
+        var widest = monitors.Count == 0 ? null : monitors.OrderByDescending(monitor => monitor.Width).First();
+        if (widest is null)
+            return;
+        if (measured.Width >= widest.Width)
+        {
+            Add(panel, $"Монитор: {widest.Width}×{widest.Height} — разрешения хватает", 12, muted: true);
+            return;
+        }
+
+        var factor = System.Globalization.CultureInfo.InvariantCulture;
+        Add(panel,
+            string.Create(factor,
+                $"Меньше монитора ({widest.Width}×{widest.Height}) — при показе будет растянуто в " +
+                $"{widest.Width / (double)measured.Width:0.0} раз и станет размытым"),
+            12, muted: true, wrap: true);
     }
 
     /// <summary>A generic yes/no confirmation.</summary>

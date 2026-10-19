@@ -211,6 +211,13 @@ public partial class MainWindow : Window
         }
 
         var wallpaper = Wallpaper.FromPath(fullPath);
+        if (File.Exists(fullPath) && !WallpaperLibrary.IsUsable(fullPath))
+        {
+            Console.Error.WriteLine($"Wallpaper file is empty: {fullPath}");
+            Environment.ExitCode = 2;
+            Avalonia.Threading.Dispatcher.UIThread.Post(QuitApplication);
+            return;
+        }
         if (wallpaper.WallpaperType == WallpaperKind.Web && Directory.Exists(fullPath) &&
             !File.Exists(Path.Combine(fullPath, "index.html")))
         {
@@ -372,7 +379,7 @@ public partial class MainWindow : Window
     {
         _allowExit = true;
         if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-            desktop.Shutdown();
+            desktop.Shutdown(Environment.ExitCode);
     }
 
     private void NavigateClick(object? sender, RoutedEventArgs e)
