@@ -32,6 +32,49 @@ public sealed class WallpaperCoreTests
     }
 
     [TestMethod]
+    public void DesktopShellWindowsAreNotFullscreenApplications()
+    {
+        Assert.IsTrue(SystemPlaybackState.IsDesktopWindowClass("Progman"));
+        Assert.IsTrue(SystemPlaybackState.IsDesktopWindowClass("WorkerW"));
+        Assert.IsTrue(SystemPlaybackState.IsDesktopWindowClass("Shell_TrayWnd"));
+        Assert.IsFalse(SystemPlaybackState.IsDesktopWindowClass("Chrome_WidgetWin_1"));
+    }
+
+    [TestMethod]
+    public void WindowsWallpaperPreparationConvertsWebpToPng()
+    {
+        var source = Path.Combine(_testDirectory, "обои.webp");
+        using var bitmap = new SKBitmap(8, 6);
+        bitmap.Erase(SKColors.CornflowerBlue);
+        using (var image = SKImage.FromBitmap(bitmap))
+        using (var data = image.Encode(SKEncodedImageFormat.Webp, 100))
+        using (var stream = File.Create(source))
+            data.SaveTo(stream);
+
+        var prepared = WindowsWallpaperBackend.PrepareImage(source);
+        try
+        {
+            Assert.AreEqual(".png", Path.GetExtension(prepared));
+            using var decoded = SKBitmap.Decode(prepared);
+            Assert.IsNotNull(decoded);
+            Assert.AreEqual(8, decoded.Width);
+            Assert.AreEqual(6, decoded.Height);
+            Assert.AreEqual(prepared, WindowsWallpaperBackend.PrepareImage(source));
+        }
+        finally
+        {
+            File.Delete(prepared);
+        }
+    }
+
+    [TestMethod]
+    public void WindowsWallpaperPreparationPreservesNativeFormats()
+    {
+        var source = Path.Combine(_testDirectory, "photo.jpg");
+        Assert.AreEqual(Path.GetFullPath(source), WindowsWallpaperBackend.PrepareImage(source));
+    }
+
+    [TestMethod]
     public void WallpaperFromPathClassifiesKindsAndUsesStableIds()
     {
         var image = Wallpaper.FromPath(Path.Combine(_testDirectory, "sunset.JPG"));

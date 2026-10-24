@@ -37,6 +37,7 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
     private MediaPlayer? _mediaPlayer;
     private Media? _media;
     private bool _started;
+    private bool _starting;
     private bool _videoPlayStarted;
     private bool _pauseRequested;
     private bool _webPageReady;
@@ -69,8 +70,9 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
     public async Task StartAsync()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_started)
+        if (_started || _starting)
             return;
+        _starting = true;
         try
         {
             switch (_wallpaper.WallpaperType)
@@ -91,6 +93,8 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
                     throw new NotSupportedException($"Unsupported wallpaper type: {_wallpaper.Kind}");
             }
 
+            if (_disposed)
+                return;
             _started = true;
             _animatedImageRenderer?.Start();
             if (_renderer is VideoView)
@@ -98,17 +102,22 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
             if (_pauseRequested)
                 Pause();
         }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or InvalidDataException or
-                InvalidOperationException or NotSupportedException or System.Text.Json.JsonException or VLCException)
+        catch (Exception exception)
         {
+            Log.Error($"Wallpaper initialization failed: {_wallpaper.Path}", exception);
             SetError(exception.Message);
-            throw;
+            throw new IOException($"Could not load wallpaper: {exception.Message}", exception);
+        }
+        finally
+        {
+            _starting = false;
         }
     }
 
     public void Pause()
     {
+        if (_disposed)
+            return;
         _pauseRequested = true;
         if (_mediaPlayer?.IsPlaying == true)
             _mediaPlayer.Pause();
@@ -125,6 +134,8 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
 
     public void Resume()
     {
+        if (_disposed)
+            return;
         _pauseRequested = false;
         if (_mediaPlayer is not null && !_mediaPlayer.IsPlaying)
         {
@@ -176,18 +187,24 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
         if (_disposed)
             return;
 
-        Stop();
+        _disposed = true;
         if (_mediaPlayer is not null)
         {
             _mediaPlayer.Vout -= OnVideoOutput;
             _mediaPlayer.EncounteredError -= OnVideoFailed;
             _mediaPlayer.EndReached -= OnVideoEnded;
+            if (_renderer is VideoView videoView)
+                videoView.MediaPlayer = null;
+            _mediaPlayer.Stop();
             _mediaPlayer.Dispose();
+            _mediaPlayer = null;
         }
+        if (_renderer is SceneControl scene)
+            scene.Stop();
+        Content = null;
         _media?.Dispose();
         _animatedImageRenderer?.Dispose();
         _bitmap?.Dispose();
-        _disposed = true;
     }
 
     private void LoadImage()
@@ -229,6 +246,8 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
         // Starting LibVLC loads hundreds of plug-ins, which can take seconds on a cold
         // start, so it is never done on the UI thread.
         var libVlc = await Task.Run(() => SharedLibVlc.Value);
+        if (_disposed)
+            return;
         _mediaPlayer = new MediaPlayer(libVlc)
         {
             Volume = _videoAudio ? 50 : 0
@@ -253,7 +272,8 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
         if (e.Count <= 0 || _mediaPlayer is null)
             return;
         _mediaPlayer.Vout -= OnVideoOutput;
-        _ = ReadVideoSizeAsync();
+        // Serialize native queries with UI-thread player disposal.
+        Dispatcher.UIThread.Post(() => _ = ReadVideoSizeAsync());
     }
 
     private async Task ReadVideoSizeAsync()
@@ -278,7 +298,7 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
                 return;
             }
 
-            await Task.Delay(150).ConfigureAwait(false);
+            await Task.Delay(150);
         }
     }
 
@@ -563,7 +583,7 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
             return;
         Dispatcher.UIThread.Post(() =>
         {
-            if (!_started || _disposed || _mediaPlayer is null || _media is null)
+            if (!_started || _disposed || _pauseRequested || _mediaPlayer is null || _media is null)
                 return;
             _mediaPlayer.Stop();
             _mediaPlayer.Play(_media);
@@ -572,7 +592,7 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
 
     private void StartVideo()
     {
-        if (!_started || _videoPlayStarted || _pauseRequested || _mediaPlayer is null || _media is null)
+        if (_disposed || !_started || _videoPlayStarted || _pauseRequested || _mediaPlayer is null || _media is null)
             return;
         if (_mediaPlayer.Play(_media))
             _videoPlayStarted = true;
@@ -580,5 +600,19 @@ public sealed class LiveWallpaperControl : UserControl, IDisposable
             SetError($"LibVLC could not start video: {_wallpaper.Path}");
     }
 
-    private void SetError(string message) => PlaybackError?.Invoke(this, message);
+    private void SetError(string message)
+    {
+        Log.Warn(message);
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            if (!_disposed)
+                PlaybackError?.Invoke(this, message);
+        }
+        else
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!_disposed)
+                    PlaybackError?.Invoke(this, message);
+            });
+    }
 }

@@ -25,6 +25,10 @@ class Program
         }
 
         Log.Configure(LogLevel.Info, options.Verbose);
+        AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
+            Log.Error($"Unhandled exception: {eventArgs.ExceptionObject}");
+        TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
+            Log.Error($"Unobserved background task exception: {eventArgs.Exception}");
 
         if (options.ShowHelp)
         {

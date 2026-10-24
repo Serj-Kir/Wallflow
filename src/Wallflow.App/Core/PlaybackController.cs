@@ -38,7 +38,7 @@ public sealed class DesktopWallpaperPlayback : IWallpaperPlayback, IDisposable
         _config = config;
     }
 
-    public IReadOnlyList<MonitorInfo> Monitors => GetScreens().Select(ToMonitorInfo).ToArray();
+    public IReadOnlyList<MonitorInfo> Monitors => GetScreens().Select((screen, index) => ToMonitorInfo(screen, index)).ToArray();
     public string BackendName => _backend.Name;
     public BackendCapabilities Capabilities => _backend.Capabilities;
     public Wallpaper? Current { get; private set; }
@@ -70,10 +70,10 @@ public sealed class DesktopWallpaperPlayback : IWallpaperPlayback, IDisposable
         }
         else
         {
-            CloseSurfaces();
             var fit = _config?.Get("linux_wallpaper_fit", wallpaper.DisplayFit) ?? wallpaper.DisplayFit;
             if (!_backend.SetWallpaper(wallpaper.Path, fit))
                 throw new IOException($"The {_backend.Name} desktop wallpaper API rejected {wallpaper.Path}.");
+            CloseSurfaces();
         }
 
         _monitorAssignments = monitors is null
@@ -182,6 +182,7 @@ public sealed class DesktopWallpaperPlayback : IWallpaperPlayback, IDisposable
                     _config?.Get("interactive_web_wallpapers", true) ?? true,
                     message => StatusMessage?.Invoke(this, message),
                     _config?.Get("max_fps", 30) ?? 30);
+                newSurfaces.Add(monitor.Id, surface);
                 surface.Show();
                 if (!surface.AttachToDesktop(screen.Bounds, virtualBounds))
                 {
@@ -191,7 +192,6 @@ public sealed class DesktopWallpaperPlayback : IWallpaperPlayback, IDisposable
                 }
                 if (Paused)
                     surface.PauseWallpaper();
-                newSurfaces.Add(monitor.Id, surface);
             }
         }
         catch
@@ -724,6 +724,7 @@ public sealed class PlaybackController : IDisposable
                 System.ComponentModel.Win32Exception)
         {
             var name = wallpaper?.Name ?? "обоев";
+            Log.Error($"Could not apply wallpaper: {name}", exception);
             StatusMessage?.Invoke(this, $"Не удалось воспроизвести «{name}»: {exception.Message}");
         }
     }
@@ -959,15 +960,19 @@ internal static class SystemPlaybackState
     {
         if (OperatingSystem.IsWindows())
         {
-            if (GetForegroundWindow() == GetDesktopWindow())
-                return true;
             var foreground = GetForegroundWindow();
-            if (foreground == IntPtr.Zero)
+            if (foreground == IntPtr.Zero || foreground == GetDesktopWindow())
                 return false;
-            if (!GetWindowRect(foreground, out var active) || !GetWindowRect(GetDesktopWindow(), out var desktop))
+            var className = new System.Text.StringBuilder(256);
+            GetClassName(foreground, className, className.Capacity);
+            if (IsDesktopWindowClass(className.ToString()))
                 return false;
-            return active.Right - active.Left >= desktop.Right - desktop.Left - 2 &&
-                   active.Bottom - active.Top >= desktop.Bottom - desktop.Top - 2;
+            var monitor = MonitorFromWindow(foreground, 2);
+            var info = new NativeMonitorInfo { Size = (uint)Marshal.SizeOf<NativeMonitorInfo>() };
+            if (!GetWindowRect(foreground, out var active) || !GetMonitorInfo(monitor, ref info))
+                return false;
+            return active.Left <= info.Monitor.Left + 2 && active.Top <= info.Monitor.Top + 2 &&
+                   active.Right >= info.Monitor.Right - 2 && active.Bottom >= info.Monitor.Bottom - 2;
         }
 
         if (!OperatingSystem.IsLinux())
@@ -1004,8 +1009,25 @@ internal static class SystemPlaybackState
         }
     }
 
-    private static bool ReadLocked() =>
-        OperatingSystem.IsWindows() && GetForegroundWindow() == GetDesktopWindow();
+    internal static bool IsDesktopWindowClass(string name) =>
+        name is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+
+    private static bool ReadLocked()
+    {
+        if (!OperatingSystem.IsWindows())
+            return false;
+        var desktop = OpenInputDesktop(0, false, 0x0100);
+        if (desktop == IntPtr.Zero)
+            return true;
+        try
+        {
+            return !SwitchDesktop(desktop);
+        }
+        finally
+        {
+            CloseDesktop(desktop);
+        }
+    }
 
     private static bool ContainsFocusedFullscreen(JsonElement node)
     {
@@ -1053,6 +1075,36 @@ internal static class SystemPlaybackState
         public int Right;
         public int Bottom;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMonitorInfo
+    {
+        public uint Size;
+        public NativeRect Monitor;
+        public NativeRect Work;
+        public uint Flags;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr window, System.Text.StringBuilder name, int count);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref NativeMonitorInfo info);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr OpenInputDesktop(uint flags, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint access);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SwitchDesktop(IntPtr desktop);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseDesktop(IntPtr desktop);
 
     [DllImport("kernel32.dll", EntryPoint = "GetSystemPowerStatus", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

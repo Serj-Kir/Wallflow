@@ -16,6 +16,7 @@ internal sealed class WallpaperSurfaceWindow : Window
     private readonly Stopwatch _transitionClock = new();
     private readonly DispatcherTimer _transitionTimer;
     private bool _clickable;
+    private bool _closed;
     private PixelRect _monitorBounds;
     private PixelRect _virtualBounds;
 
@@ -60,16 +61,18 @@ internal sealed class WallpaperSurfaceWindow : Window
             {
                 await _wallpaper.StartAsync();
             }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException or InvalidDataException or
-                    InvalidOperationException or NotSupportedException or System.Text.Json.JsonException)
+            catch (Exception exception)
             {
-                reportError($"{monitor.Name}: {exception.Message}");
+                Log.Error($"Could not start wallpaper on {monitor.Name}", exception);
+                if (!_closed)
+                    reportError($"{monitor.Name}: {exception.Message}");
             }
-            BeginTransition();
+            if (!_closed)
+                BeginTransition();
         };
         Closed += (_, _) =>
         {
+            _closed = true;
             _transitionTimer.Stop();
             _wallpaper.Dispose();
         };
@@ -181,7 +184,9 @@ internal static class DesktopSurfacePlatform
         if (programManager == IntPtr.Zero)
             return false;
 
-        SendMessageTimeout(programManager, 0x052C, new IntPtr(0xD), new IntPtr(0x1), 0, 1000, out _);
+        const uint abortIfHung = 0x0002;
+        SendMessageTimeout(programManager, 0x052C, IntPtr.Zero, IntPtr.Zero, abortIfHung, 1000, out _);
+        SendMessageTimeout(programManager, 0x052C, new IntPtr(0xD), new IntPtr(0x1), abortIfHung, 1000, out _);
         var worker = FindWallpaperWorker();
         var parent = worker != IntPtr.Zero ? worker : programManager;
         SetLastError(0);
@@ -199,12 +204,14 @@ internal static class DesktopSurfacePlatform
             extendedStyle |= 0x00000020L;
         SetWindowLong(hwnd, -20, new IntPtr(extendedStyle));
 
-        const uint flags = 0x0010 | 0x0040 | 0x0200;
+        var origin = new NativePoint { X = monitorBounds.X, Y = monitorBounds.Y };
+        MapWindowPoints(IntPtr.Zero, parent, ref origin, 1);
+        const uint flags = 0x0010 | 0x0040 | 0x0200 | 0x0020;
         return SetWindowPos(
             hwnd,
             new IntPtr(1),
-            monitorBounds.X - virtualBounds.X,
-            monitorBounds.Y - virtualBounds.Y,
+            origin.X,
+            origin.Y,
             monitorBounds.Width,
             monitorBounds.Height,
             flags);
@@ -368,4 +375,14 @@ internal static class DesktopSurfacePlatform
             : new IntPtr(SetWindowLong32(hwnd, index, value.ToInt32()));
 
     private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr parameter);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern int MapWindowPoints(IntPtr from, IntPtr to, ref NativePoint points, uint count);
 }

@@ -135,7 +135,41 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
         if (!File.Exists(path))
             throw new FileNotFoundException("Wallpaper image does not exist.", path);
         ApplyStyle(fit);
-        return SystemParametersInfo(SpiSetDesktopWallpaper, 0, Path.GetFullPath(path), UpdateIniFile | SendChange);
+        var fullPath = PrepareImage(path);
+        if (SystemParametersInfo(SpiSetDesktopWallpaper, 0, fullPath, UpdateIniFile | SendChange))
+            return true;
+        Log.Warn($"Windows rejected wallpaper '{fullPath}': {new Win32Exception(Marshal.GetLastWin32Error()).Message}");
+        return false;
+    }
+
+    internal static string PrepareImage(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var extension = Path.GetExtension(fullPath).ToLowerInvariant();
+        if (extension is ".bmp" or ".jpg" or ".jpeg" or ".png")
+            return fullPath;
+
+        // SPI does not support all the formats the library can import (notably WebP).
+        using var bitmap = SkiaSharp.SKBitmap.Decode(fullPath)
+            ?? throw new InvalidDataException($"Could not decode wallpaper image: {fullPath}");
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+        var directory = Path.Combine(WallflowPaths.CacheDirectory, "desktop");
+        Directory.CreateDirectory(directory);
+        var destination = Path.Combine(directory, Wallpaper.IdForPath(fullPath) + ".png");
+        var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = File.Create(temporary))
+                data.SaveTo(stream);
+            File.Move(temporary, destination, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+                File.Delete(temporary);
+        }
+        return destination;
     }
 
     public bool Clear() => SystemParametersInfo(SpiSetDesktopWallpaper, 0, "", UpdateIniFile | SendChange);
@@ -162,7 +196,7 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
             key.SetValue("TileWallpaper", tile, Microsoft.Win32.RegistryValueKind.String);
         }
         catch (Exception exception) when (
-            exception is IOException or SecurityException or InvalidOperationException)
+            exception is IOException or UnauthorizedAccessException or SecurityException or InvalidOperationException)
         {
             Log.Warn("Could not persist the Windows wallpaper fit mode", exception);
         }
@@ -190,7 +224,7 @@ internal sealed class WindowsWallpaperBackend : IWallpaperBackend
             key.SetValue("ColorizationColor", value, Microsoft.Win32.RegistryValueKind.DWord);
         }
         catch (Exception exception) when (
-            exception is IOException or SecurityException or InvalidOperationException)
+            exception is IOException or UnauthorizedAccessException or SecurityException or InvalidOperationException)
         {
             Log.Warn("Could not set the Windows accent colour", exception);
         }
